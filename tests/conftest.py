@@ -16,6 +16,18 @@ def scope_address(request):
     return request.config.getoption("--scope-address")
 
 
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path, monkeypatch):
+    """Never touch the user's real QSettings (Windows registry) from tests."""
+    from PySide6.QtCore import QSettings
+
+    from scope_gui import settings
+
+    path = str(tmp_path / "scope_gui_settings.ini")
+    monkeypatch.setattr(settings, "_settings", lambda: QSettings(path, QSettings.Format.IniFormat))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+
 def _reachable(host: str) -> bool:
     try:
         with socket.create_connection((host, 111), timeout=3):

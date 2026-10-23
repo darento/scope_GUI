@@ -4,9 +4,10 @@ import logging
 import sys
 from logging.handlers import RotatingFileHandler
 
-from PySide6.QtWidgets import QApplication, QMainWindow
+from PySide6.QtWidgets import QApplication
 
-from .settings import log_dir
+from .settings import load_last_address, log_dir
+from .ui.main_window import MainWindow
 
 LOG_FORMAT = "%(asctime)s %(levelname)-7s [%(threadName)s] %(name)s: %(message)s"
 
@@ -28,8 +29,7 @@ def main() -> int:
     logging.getLogger(__name__).info("scope_gui starting")
     app = QApplication(sys.argv)
     app.setApplicationName("Scope GUI")
-    window = QMainWindow()
-    window.setWindowTitle("Scope GUI")
+    window = MainWindow(load_last_address())
     window.show()
     return app.exec()
 

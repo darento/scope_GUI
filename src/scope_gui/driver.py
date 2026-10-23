@@ -6,12 +6,15 @@ Every command sent must match ALLOWED_COMMANDS: read-only queries verified on th
 
 import logging
 import re
+import socket
 
 import pyvisa
 from pyvisa import constants
 from pyvisa.errors import VisaIOError
 
-from .errors import CommandNotAllowed, ScopeBusy, ScopeError, ScopeTimeout
+from .errors import CommandNotAllowed, ScopeBusy, ScopeError, ScopeTimeout, ScopeUnreachable
+from .models import InstrumentIdentity
+from .settings import host_of
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +41,9 @@ ALLOWED_COMMANDS = tuple(
 )
 
 QUERY_TIMEOUT_MS = 3000
+RECOVER_TIMEOUT_MS = 1500
+VXI11_PORT = 111
+DEFAULT_WFSU = "SP,0,NP,0,FP,0,SN,0"
 
 _BUSY_CODES = {
     constants.StatusCode.error_resource_busy,
@@ -69,6 +75,26 @@ def parse_float(reply: str) -> float:
     return float(parse_value(reply))
 
 
+def tcp_precheck(host: str, timeout: float = 3.0) -> None:
+    """Fail fast when nothing answers on the VXI-11 portmapper (research R8)."""
+    try:
+        with socket.create_connection((host, VXI11_PORT), timeout=timeout):
+            pass
+    except OSError as exc:
+        raise ScopeUnreachable(f"Instrument not reachable at {host}") from exc
+
+
+def parse_identity(reply: str) -> InstrumentIdentity:
+    # "*IDN LECROY,WR610ZI,LCRY3201N55990,9.1.0" (header optional)
+    body = reply.strip()
+    if body.upper().startswith("*IDN"):
+        body = body[4:].strip()
+    fields = [f.strip() for f in body.split(",")]
+    if len(fields) < 4:
+        raise ScopeError(f"unexpected identity reply {reply!r}")
+    return InstrumentIdentity(*fields[:4])
+
+
 def _default_factory(address: str, timeout_ms: int):
     rm = pyvisa.ResourceManager("@py")
     return rm.open_resource(address, timeout=timeout_ms)
@@ -90,6 +116,57 @@ class ScopeDriver:
     @property
     def is_open(self) -> bool:
         return self._resource is not None
+
+    # --- connection --------------------------------------------------------------------------
+    def connect(self, address: str) -> InstrumentIdentity:
+        """Open the VXI-11 link and identify the instrument. Sends queries only."""
+        tcp_precheck(host_of(address))
+        log.info("opening %s", address)
+        try:
+            self._resource = self._factory(address, QUERY_TIMEOUT_MS)
+        except VisaIOError as exc:
+            raise map_visa_error(exc, "open") from exc
+        try:
+            identity = parse_identity(self._query("*IDN?"))
+            log.info("connected to %s", identity)
+            # Read (never write) the remote-interface setup shared with other clients (R3).
+            setup = {cmd: self._query(cmd) for cmd in ("CHDR?", "CFMT?", "CORD?", "WFSU?")}
+            for command, reply in setup.items():
+                log.info("%s -> %s", command, reply)
+            wfsu = parse_value(setup["WFSU?"])
+            if wfsu.upper() != DEFAULT_WFSU:
+                log.warning("WFSU is %s (not %s): transfers may be sparse", wfsu, DEFAULT_WFSU)
+        except Exception:
+            self.close()
+            raise
+        return identity
+
+    def close(self) -> None:
+        resource, self._resource = self._resource, None
+        if resource is None:
+            return
+        try:
+            resource.close()
+            log.info("connection closed")
+        except Exception as exc:  # closing an already broken link must never fail
+            log.debug("close: %s", exc)
+
+    def recover(self) -> bool:
+        """Device clear + identity check; True if the link answers again (research R4)."""
+        resource = self._resource
+        if resource is None:
+            return False
+        try:
+            resource.clear()
+            self._check("*IDN?")
+            log.debug("query *IDN? (recover)")
+            resource.timeout = RECOVER_TIMEOUT_MS
+            resource.query("*IDN?")
+            log.info("link recovered")
+            return True
+        except Exception as exc:
+            log.warning("recover failed: %s", exc)
+            return False
 
     # --- low level ---------------------------------------------------------------------------
     def _check(self, command: str) -> None:

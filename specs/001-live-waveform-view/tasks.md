@@ -144,13 +144,13 @@ last address remembered.
 
 ### Tests for User Story 1
 
-- [ ] T016 [P] [US1] Write `tests/unit/test_driver_connect.py` using `fake_factory`: `connect()`
+- [X] T016 [P] [US1] Write `tests/unit/test_driver_connect.py` using `fake_factory`: `connect()`
   returns identity parsed from the `*IDN?` fixture and logs `CHDR?`/`CFMT?`/`CORD?`/`WFSU?`
   replies (warning logged when WFSU is not `SP,0,NP,0,FP,0`); unreachable host → `ScopeUnreachable`
   in < 4 s (pre-check patched); busy → `ScopeBusy`; `*IDN?` timeout → `ScopeTimeout`; `close()`
   idempotent; `recover()` calls `clear()` then `*IDN?` and returns True/False; `classify_support`
   for `LECROY,WR610ZI`, `LECROY,WAVEPRO`, `KEYSIGHT,...`
-- [ ] T017 [P] [US1] Write `tests/integration/test_connect_ui.py` (pytest-qt, worker driver
+- [X] T017 [P] [US1] Write `tests/integration/test_connect_ui.py` (pytest-qt, worker driver
   injected with `fake_factory`): states DISCONNECTED → CONNECTING → CONNECTED with identity text;
   unreachable shows English error message and returns to a usable state; unsupported identity
   shows Continue/Cancel dialog (Cancel → DISCONNECTED, Continue → CONNECTED); Disconnect →
@@ -159,13 +159,13 @@ last address remembered.
 
 ### Implementation for User Story 1
 
-- [ ] T018 [US1] Implement `ScopeDriver.connect(address)`, `close()`, `recover()` in
+- [X] T018 [US1] Implement `ScopeDriver.connect(address)`, `close()`, `recover()` in
   `src/scope_gui/driver.py`: TCP pre-check to port 111 of `host_of(address)` with 3 s timeout
   (`ScopeUnreachable` on failure); open resource with 3000 ms timeout; `*IDN?` →
   `InstrumentIdentity` (support via `classify_support`); read and log `CHDR?`, `CFMT?`, `CORD?`,
   `WFSU?` (never write them, research R3); `close()` idempotent and safe from another thread;
   `recover()` = `resource.clear()` + `*IDN?` → bool
-- [ ] T019 [US1] Implement `src/scope_gui/worker.py` `AcquisitionWorker(QObject)` connection part:
+- [X] T019 [US1] Implement `src/scope_gui/worker.py` `AcquisitionWorker(QObject)` connection part:
   constructor takes `driver_factory` (default `ScopeDriver`); signals
   `state_changed(ConnectionState, str)`, `identity_received(InstrumentIdentity)`,
   `confirmation_needed(InstrumentIdentity)`; slots `connect_to(address)`,
@@ -174,21 +174,21 @@ last address remembered.
   English messages ("Instrument not reachable at …", "Instrument busy (used by another
   client) — try again", "Instrument did not respond (timeout)"); all I/O runs in the worker's
   `QThread`
-- [ ] T020 [P] [US1] Implement `src/scope_gui/ui/connection_bar.py` `ConnectionBar(QWidget)`:
+- [X] T020 [P] [US1] Implement `src/scope_gui/ui/connection_bar.py` `ConnectionBar(QWidget)`:
   address `QLineEdit` (editable only when DISCONNECTED/LOST/ERROR), Connect/Disconnect button
   (shows "Cancel" while CONNECTING), status dot + text (grey Disconnected, amber Connecting,
   green Connected, red Lost/Error), identity label "MANUFACTURER MODEL · SN … · FW …";
   signals `connect_requested(str)`, `disconnect_requested()`
-- [ ] T021 [US1] Implement `src/scope_gui/ui/main_window.py` `MainWindow(QMainWindow)`: connection
+- [X] T021 [US1] Implement `src/scope_gui/ui/main_window.py` `MainWindow(QMainWindow)`: connection
   bar on top, placeholder central widget, status bar for messages, menu Help → "Open log folder"
   (`QDesktopServices.openUrl(log_dir())`); creates `QThread` + `AcquisitionWorker`
   (`moveToThread`), wires signals with queued connections; `QMessageBox` Continue/Cancel on
   `confirmation_needed` (text per research R11); saves address on CONNECTED; `closeEvent` per
   research R8 (request `shutdown`, wait 1 s, else `driver.close()` to abort, then
   `thread.quit(); thread.wait()`); accepts an optional `driver_factory` for tests
-- [ ] T022 [US1] Update `src/scope_gui/__main__.py` `main()` to create `MainWindow` with the
+- [X] T022 [US1] Update `src/scope_gui/__main__.py` `main()` to create `MainWindow` with the
   address from `load_last_address()` pre-filled, then `app.exec()`
-- [ ] T023 [P] [US1] Write `tests/hardware/test_real_scope.py::test_identity` (marked
+- [X] T023 [P] [US1] Write `tests/hardware/test_real_scope.py::test_identity` (marked
   `hardware`): `ScopeDriver().connect(scope_address)` returns manufacturer `LECROY`, model
   `WR610ZI`, support SUPPORTED; `close()`
 

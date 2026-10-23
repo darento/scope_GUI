@@ -1,5 +1,4 @@
 import pytest
-from PySide6.QtCore import QSettings
 
 from scope_gui import settings
 
@@ -26,17 +25,11 @@ def test_host_of():
     assert settings.host_of("192.168.0.9") == "192.168.0.9"
 
 
-@pytest.fixture
-def temp_settings(tmp_path, monkeypatch):
-    path = str(tmp_path / "settings.ini")
-    monkeypatch.setattr(settings, "_settings", lambda: QSettings(path, QSettings.Format.IniFormat))
-
-
-def test_last_address_default(temp_settings):
+def test_last_address_default():
     assert settings.load_last_address() == "192.168.0.9"
 
 
-def test_last_address_round_trip(temp_settings):
+def test_last_address_round_trip():
     settings.save_last_address(" 10.1.2.3 ")
     assert settings.load_last_address() == "10.1.2.3"
 

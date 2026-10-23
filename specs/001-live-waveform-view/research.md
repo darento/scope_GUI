@@ -102,8 +102,8 @@ read simply times out. After a device clear (`viClear`), the session works norma
   - Trigger position marker at `t = 0`.
 - **Rationale**: Matches the scope's own geometry independent of each channel's scale; verified
   numerically with the probe values above.
-- **Note**: only `GRID SINGLE` is mirrored in this feature; other grid modes are logged and drawn
-  as single grid.
+- **Note**: only `GRID SINGLE` is mirrored in this feature; for other grid modes all channels are
+  drawn on one grid and the UI shows a "scope uses multi-grid layout" note (clarified in spec).
 
 ## R7. Plotting library
 

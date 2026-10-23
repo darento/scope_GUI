@@ -9,6 +9,22 @@
 **Input**: User description: "connect to the scope and show live waveforms" — the GUI must
 connect to the real scope and show what is being seen on it; no simulation.
 
+## Clarifications
+
+### Session 2026-10-23
+
+- Q: Besides C1–C4, which other traces shown on the scope should the PC display in this first
+  version? → A: Only C1–C4; math, zoom, memory traces and measurements are later features.
+- Q: Is ~1.5 refreshes/s at 500k points × 3 channels acceptable, or is a faster option needed?
+  → A: Acceptable; always full resolution and read-only, with the achieved rate shown. No
+  fast-preview mode.
+- Q: When the scope shows traces across several grids (dual/quad), what should the PC show?
+  → A: Always one grid with every channel correctly positioned, plus a note that the scope uses
+  a multi-grid layout.
+- Q: What language should the interface use? → A: English only.
+- Q: Will other programs control the scope remotely while the app is open? → A: Rarely; the app
+  must coexist with them, adapting to their changes and retrying when the scope is busy.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Connect to the scope (Priority: P1)
@@ -84,8 +100,12 @@ the same shape, position, amplitude and period, and that both update together.
 - **Connection lost during live view** (cable pulled, scope powered off): detected and reported
   within 5 seconds; the last waveforms stay visible but are clearly marked as stale (not live);
   the user can reconnect without restarting the app.
-- **Scope busy or held by another remote client**: the app reports that the instrument is busy
-  instead of freezing, and lets the user retry.
+- **Scope busy or held by another remote client**: when connecting, the app reports that the
+  instrument is busy instead of freezing, and lets the user retry. During live view, a briefly
+  busy scope is retried automatically; the connection is only declared lost if the scope stays
+  unresponsive beyond the 5-second limit.
+- **Another program changes scope settings remotely** while the app is open: the app adapts
+  (same as front-panel changes) and keeps working.
 - **Instrument at the address is not a supported LeCroy scope**: the app shows the identity it
   received, warns that the model is unsupported, and lets the user cancel or continue at their
   own risk.
@@ -96,6 +116,9 @@ the same shape, position, amplitude and period, and that both update together.
 - **Trigger never fires** (e.g. normal trigger mode with no signal): the app shows that the scope
   is waiting for a trigger and keeps the last waveform, rather than reporting an error.
 - **Closing the app during a transfer**: the app closes promptly and ends the session cleanly.
+- **Scope set to a multi-grid layout** (dual/quad grid): the PC still draws all channels on a
+  single grid, each at its correct scale and position, and shows a note that the scope is using
+  a multi-grid layout.
 
 ## Requirements *(mandatory)*
 
@@ -127,6 +150,8 @@ the same shape, position, amplitude and period, and that both update together.
 - **FR-010**: The plot MUST reproduce the scope's display geometry: the same grid of divisions
   (horizontal and vertical), and each waveform drawn at the same vertical position (scale and
   offset) and horizontal position (timebase and trigger position) as on the scope's screen.
+  Only the single-grid layout is reproduced; when the scope uses a multi-grid layout, all
+  channels are drawn on one grid and the user is told the scope's layout differs.
 - **FR-011**: Waveforms MUST be shown in physical units (volts and seconds) derived from the
   scope's current settings, so values can be read off the axes or cursor readout.
 - **FR-012**: Each channel MUST be drawn in the same colour the scope uses for that channel.
@@ -171,7 +196,10 @@ the same shape, position, amplitude and period, and that both update together.
 - **SC-001**: A user who knows the scope's address goes from launching the app to seeing live
   waveforms in under 30 seconds.
 - **SC-002**: With four channels on and up to 100,000 points per channel, the live view
-  refreshes at least 5 times per second on the lab network.
+  refreshes at least 5 times per second on the lab network. For longer records the refresh rate
+  is bounded by the scope's readout speed (about 1.5 refreshes/s at 500,000 points × 3
+  channels); this is acceptable as long as the achieved rate is displayed. Waveforms are always
+  shown at the full resolution the scope provides.
 - **SC-003**: The window responds to user input within 0.2 seconds at all times, including
   during connection, data transfer and connection loss.
 - **SC-004**: In 100% of tested connection-loss scenarios (cable unplugged, scope powered off),
@@ -187,16 +215,19 @@ the same shape, position, amplitude and period, and that both update together.
 - One user, one scope at a time: the LeCroy WaveRunner 610Zi in the lab, reachable over the
   local network (currently at `192.168.0.9`). The application has no simulated or demo mode;
   without a reachable scope it only offers connecting.
-- Only the four analog channels (C1–C4) are in scope; math, memory, zoom and digital traces are
-  out of scope for this feature.
+- Only the four analog channels (C1–C4) are in scope; math, zoom, memory and digital traces and
+  the measurement table are out of scope for this feature (confirmed in Clarifications).
 - Changing scope settings from the app (scale, timebase, trigger, run/stop) is out of scope and
   will be a later feature; this feature is read-only.
 - Saving, exporting or measuring waveforms is out of scope and will be a later feature.
 - For very long records, the display may draw a reduced-resolution version of the real data as
   long as its visible shape is faithful to the scope's trace; full-resolution data is a concern
   of a later capture/export feature.
-- People may keep using the scope's front panel while the app is connected; the app adapts to
-  their changes rather than preventing them.
+- People may keep using the scope's front panel while the app is connected, and other programs
+  occasionally control the scope remotely at the same time; the app adapts to their changes
+  rather than preventing them.
 - Automated tests may substitute a fake instrument inside the test suite only (per the
   constitution); this never affects what the application shows.
 - The application runs on the lab's Windows 11 PCs.
+- The user interface is in English only, using the scope's own terminology (e.g. Trigger,
+  V/div, Stopped).

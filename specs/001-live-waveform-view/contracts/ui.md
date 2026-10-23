@@ -41,6 +41,7 @@ required; there is no simulated mode.
 | Error message | Non-modal banner/status message for unreachable, busy, timeout | FR-006, edge cases |
 | Plot | Shows enabled channels only, in divisions grid; hover readout shows time and per-channel volts | FR-008–FR-012 |
 | "No channels enabled on the scope" | Centered text when no channel is on | edge case |
+| Multi-grid note | Small label "Scope uses a multi-grid layout; shown here on one grid" when `GRID?` ≠ `SINGLE` | FR-010 |
 | Channel panel checkbox | Hides/shows a trace locally only; disabled for channels off at the scope | FR-017 |
 | Channel panel text | V/div, offset, coupling per channel | FR-013 |
 | Acquisition panel | Time/div, trigger mode, `Acquiring` / `Waiting for trigger` / `Stopped` | FR-013 |
@@ -51,6 +52,7 @@ required; there is no simulated mode.
 
 ## Guarantees
 
+- All UI text is in English, using the scope's terminology (Trigger, V/div, Stopped, …).
 - No control in this feature sends a state-changing command to the scope (FR-018).
 - The window stays interactive (move, resize, pause, disconnect) at all times (FR-019).
 - Closing the window during a transfer exits within ~1 s plus the current read's abort (R8).

@@ -32,6 +32,9 @@
 ## Notes
 
 - Validated in 1 iteration; all items pass.
+- Revised 2026-10-23: simulated mode removed at user request (real scope only, FR-009); live
+  view now explicitly mirrors the scope's display geometry (FR-010, SC-006). Re-validated; all
+  items still pass.
 - Domain terms (V/div, timebase, C1–C4, instrument address) are oscilloscope-user vocabulary,
   not implementation details.
 - Scope boundaries made explicit in Assumptions: read-only (no setting changes), analog channels

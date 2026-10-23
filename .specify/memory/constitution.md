@@ -9,15 +9,12 @@ All communication with the oscilloscope MUST go through a single driver interfac
 
 - GUI code MUST NOT import `pyvisa` or build/send raw remote-command strings; only driver
   implementations may do so.
-- At least two driver implementations MUST exist and stay in sync with the interface: a real
-  driver (VXI-11 via pyvisa + pyvisa-py) and a simulated driver that returns plausible data.
-- The driver in use MUST be selectable at launch (e.g. a `--simulate` flag or setting), so the
-  full GUI runs with no scope connected.
-- Instrument-specific command syntax (LeCroy remote commands) MUST live only inside the real
-  driver.
+- The application ships exactly one driver: the real one (VXI-11 via pyvisa + pyvisa-py). It
+  MUST always show what the physical scope is acquiring; there is no simulated or demo mode.
+- Instrument-specific command syntax (LeCroy remote commands) MUST live only inside the driver.
 
-Rationale: keeps the GUI independent of the lab bench, makes development possible anywhere, and
-contains model/firmware quirks in one place.
+Rationale: the GUI exists to mirror the real instrument; isolating I/O in one place contains
+model/firmware quirks and lets tests substitute a fake instrument (Principle IV).
 
 ### II. Responsive UI (Never Block the GUI Thread)
 
@@ -53,8 +50,8 @@ someone else's carefully prepared setup.
 
 Every feature MUST be verifiable with no oscilloscope connected. Rules:
 
-- Each feature MUST ship with pytest tests that run against the simulated driver or a mock
-  instrument.
+- Each feature MUST ship with pytest tests that run against a fake instrument. Fakes live
+  only under `tests/` and MUST NOT be reachable from the application.
 - The default test run (`uv run pytest`) MUST pass on a machine with no scope and no NI-VISA.
 - Tests that need real hardware MUST be marked (e.g. `@pytest.mark.hardware`) and skipped by
   default.
@@ -116,4 +113,4 @@ task conflicts with it, the constitution wins until it is amended.
 - **Compliance** is checked in every plan's Constitution Check and during review before merge;
   unjustified complexity or principle violations block the merge.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-23
+**Version**: 2.0.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-23

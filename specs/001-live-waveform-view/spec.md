@@ -6,7 +6,8 @@
 
 **Status**: Draft
 
-**Input**: User description: "connect to the scope and show live waveforms"
+**Input**: User description: "connect to the scope and show live waveforms" — the GUI must
+connect to the real scope and show what is being seen on it; no simulation.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -20,9 +21,9 @@ right scope. The engineer can disconnect at any time.
 **Why this priority**: Nothing else works without a reliable connection, and showing the
 identity immediately confirms the setup (cabling, network, address) is correct.
 
-**Independent Test**: Launch the app, enter the scope's address, press Connect, and verify the
-status shows "Connected" with the correct model and serial number; press Disconnect and verify
-the status returns to "Disconnected".
+**Independent Test**: With the scope on the network, launch the app, enter the scope's address,
+press Connect, and verify the status shows "Connected" with the scope's real model and serial
+number; press Disconnect and verify the status returns to "Disconnected".
 
 **Acceptance Scenarios**:
 
@@ -39,60 +40,41 @@ the status returns to "Disconnected".
 
 ---
 
-### User Story 2 - See live waveforms (Priority: P2)
+### User Story 2 - Mirror the scope's waveforms live (Priority: P2)
 
-Once connected, the engineer sees the waveforms of every channel that is turned on at the scope,
-updating continuously as the scope acquires, in real units (volts versus time) and with the same
-channel colours as the scope's screen. The scope's current vertical scale per channel, timebase
-and trigger state are shown next to the plot. If someone changes settings on the scope's front
-panel, the view follows.
+Once connected, the engineer sees on the PC the same waveforms the scope is showing on its own
+screen: the same channels, in the same colours, on the same grid of divisions, with the same
+vertical scale, offset and timebase, updating continuously as the scope acquires. If someone
+changes settings on the scope's front panel, the PC view follows, so the two screens always
+match.
 
-**Why this priority**: This is the core value of the feature: viewing the signals on the PC
-instead of only on the scope's screen.
+**Why this priority**: This is the core value of the feature: seeing on the PC exactly what the
+scope is measuring.
 
 **Independent Test**: With the scope acquiring a known signal (e.g. its calibration output),
-connect and verify the waveform appears, updates continuously, and its amplitude and period
-match what the scope itself displays.
+connect and place the PC view next to the scope screen; verify the same channels appear with
+the same shape, position, amplitude and period, and that both update together.
 
 **Acceptance Scenarios**:
 
 1. **Given** the app is connected and channels 1, 3 and 4 are on at the scope, **When** the live
    view is shown, **Then** exactly those three channels are plotted, each in its scope colour,
    and they update continuously.
-2. **Given** a live view is running, **When** someone turns a channel on or off or changes its
-   vertical scale or the timebase at the scope, **Then** the view reflects the change within
-   2 seconds.
-3. **Given** a live view is running, **When** the scope's acquisition is stopped at the scope,
-   **Then** the app keeps showing the last acquired waveform and indicates that the scope is
-   stopped, without restarting acquisition.
-4. **Given** a live view is running, **When** the user pauses the live view in the app, **Then**
-   the display freezes on the current waveforms while the scope keeps running, and resuming
+2. **Given** a live view is running, **When** the user compares it with the scope's screen,
+   **Then** each waveform sits at the same position on the same grid of divisions, with the
+   same vertical scale, offset, timebase and trigger position.
+3. **Given** a live view is running, **When** someone turns a channel on or off or changes its
+   vertical scale, offset or the timebase at the scope, **Then** the PC view reflects the change
+   within 2 seconds.
+4. **Given** a live view is running, **When** the scope's acquisition is stopped at the scope,
+   **Then** the app keeps showing the last acquired waveform, as the scope does, and indicates
+   that the scope is stopped, without restarting acquisition.
+5. **Given** a live view is running, **When** the user pauses the live view in the app, **Then**
+   the PC display freezes on the current waveforms while the scope keeps running, and resuming
    continues live updates.
-5. **Given** several channels are plotted, **When** the user hides one channel in the app,
-   **Then** it disappears from the plot only, and the scope's own channel setting is unchanged.
-
----
-
-### User Story 3 - Work without a scope (simulated mode) (Priority: P3)
-
-An engineer who does not have the scope at hand (or the scope is in use by someone else) starts
-the application in simulated mode. The whole connect-and-view flow works with generated signals,
-and the app clearly labels that the data is simulated.
-
-**Why this priority**: Lets the tool be demonstrated, developed and checked without occupying
-shared lab equipment. Required by the project's principles but not the primary user value.
-
-**Independent Test**: On a PC with no scope connected, start in simulated mode, connect, and
-verify identity, channel settings and moving waveforms appear, all labelled as simulated.
-
-**Acceptance Scenarios**:
-
-1. **Given** no scope is available, **When** the user chooses simulated mode and connects,
-   **Then** a simulated identity and continuously updating waveforms for several channels are
-   shown.
-2. **Given** simulated mode is active, **When** the user looks at any part of the window,
-   **Then** a visible "SIMULATED" indicator makes it impossible to confuse the data with real
-   measurements.
+6. **Given** several channels are plotted, **When** the user hides one channel in the app,
+   **Then** it disappears from the PC plot only, and the scope's own channel setting is
+   unchanged.
 
 ---
 
@@ -100,8 +82,8 @@ verify identity, channel settings and moving waveforms appear, all labelled as s
 
 - **Wrong or unreachable address**: connect fails within 10 seconds with a clear message; no hang.
 - **Connection lost during live view** (cable pulled, scope powered off): detected and reported
-  within 5 seconds; the last waveforms stay visible but are marked as stale; the user can
-  reconnect without restarting the app.
+  within 5 seconds; the last waveforms stay visible but are clearly marked as stale (not live);
+  the user can reconnect without restarting the app.
 - **Scope busy or held by another remote client**: the app reports that the instrument is busy
   instead of freezing, and lets the user retry.
 - **Instrument at the address is not a supported LeCroy scope**: the app shows the identity it
@@ -111,8 +93,8 @@ verify identity, channel settings and moving waveforms appear, all labelled as s
   enabled on the scope" instead of an empty plot.
 - **Very long record lengths** (millions of points): the view stays responsive; the update rate
   may drop, and the actual update rate is shown so the user knows.
-- **Trigger never fires** (e.g. normal trigger mode with no signal): the app shows that it is
-  waiting for a trigger and keeps the last waveform, rather than reporting an error.
+- **Trigger never fires** (e.g. normal trigger mode with no signal): the app shows that the scope
+  is waiting for a trigger and keeps the last waveform, rather than reporting an error.
 - **Closing the app during a transfer**: the app closes promptly and ends the session cleanly.
 
 ## Requirements *(mandatory)*
@@ -136,52 +118,51 @@ verify identity, channel settings and moving waveforms appear, all labelled as s
 - **FR-007**: Loss of connection MUST be detected and shown within 5 seconds; the system MUST
   return to a state from which the user can reconnect without restarting.
 
-**Live view**
+**Live view (mirroring the scope)**
 
 - **FR-008**: While connected, the system MUST continuously display the waveforms of each analog
   channel (C1–C4) that is turned on at the scope, and MUST NOT plot channels that are off.
-- **FR-009**: Waveforms MUST be shown in physical units (volts on the vertical axis, seconds on
-  the horizontal axis) derived from the scope's current settings.
-- **FR-010**: Each channel MUST be drawn in the same colour the scope uses for that channel.
-- **FR-011**: The system MUST show, for each displayed channel, its vertical scale (V/div) and
+- **FR-009**: All displayed data MUST come from the connected scope; the application MUST NOT
+  generate, simulate or fabricate waveform data under any circumstance.
+- **FR-010**: The plot MUST reproduce the scope's display geometry: the same grid of divisions
+  (horizontal and vertical), and each waveform drawn at the same vertical position (scale and
+  offset) and horizontal position (timebase and trigger position) as on the scope's screen.
+- **FR-011**: Waveforms MUST be shown in physical units (volts and seconds) derived from the
+  scope's current settings, so values can be read off the axes or cursor readout.
+- **FR-012**: Each channel MUST be drawn in the same colour the scope uses for that channel.
+- **FR-013**: The system MUST show, for each displayed channel, its vertical scale (V/div) and
   offset, plus the scope's timebase (time/div) and trigger/acquisition state
   (e.g. Auto, Normal, Single, Stopped, Waiting for trigger).
-- **FR-012**: Changes made at the scope (channel on/off, vertical scale, offset, timebase) MUST
-  be reflected in the view within 2 seconds.
-- **FR-013**: The system MUST indicate how fresh the data is (live update rate and/or time of
+- **FR-014**: Changes made at the scope (channel on/off, vertical scale, offset, timebase,
+  trigger position) MUST be reflected in the view within 2 seconds.
+- **FR-015**: The system MUST indicate how fresh the data is (live update rate and/or time of
   the last update), and mark waveforms as stale when no new data arrives because of an error.
-- **FR-014**: Users MUST be able to pause and resume the live view; pausing affects only the
+- **FR-016**: Users MUST be able to pause and resume the live view; pausing affects only the
   application's display, never the scope.
-- **FR-015**: Users MUST be able to hide and show individual channels in the application's plot
+- **FR-017**: Users MUST be able to hide and show individual channels in the application's plot
   without changing the scope.
 
 **Safety & robustness**
 
-- **FR-016**: This feature MUST NOT change any setting or state of the scope (including channel
+- **FR-018**: This feature MUST NOT change any setting or state of the scope (including channel
   settings, timebase, trigger mode, and acquisition run/stop); it only reads.
-- **FR-017**: The window MUST remain responsive (moving, resizing, pausing, disconnecting) during
+- **FR-019**: The window MUST remain responsive (moving, resizing, pausing, disconnecting) during
   connection attempts, data transfers and connection failures.
-- **FR-018**: Connection events and errors MUST be recorded in a log the user can consult when
+- **FR-020**: Connection events and errors MUST be recorded in a log the user can consult when
   troubleshooting.
-
-**Simulated mode**
-
-- **FR-019**: Users MUST be able to run the application in a simulated mode that provides a
-  simulated instrument identity, channel settings and continuously changing waveforms on at
-  least two channels, with no scope present.
-- **FR-020**: While in simulated mode, a "SIMULATED" indicator MUST be permanently visible.
 
 ### Key Entities
 
-- **Instrument Connection**: the session with one oscilloscope; has an address, a state
-  (Disconnected, Connecting, Connected, Error/Lost) and whether it is real or simulated.
+- **Instrument Connection**: the session with the oscilloscope; has an address and a state
+  (Disconnected, Connecting, Connected, Error/Lost).
 - **Instrument Identity**: manufacturer, model, serial number, firmware version of the connected
   scope.
 - **Channel**: one analog input (C1–C4); has an on/off state at the scope, vertical scale,
   offset, display colour, and a local shown/hidden state in the app.
-- **Acquisition Settings**: timebase (time/div), trigger mode and acquisition state at the scope.
-- **Waveform**: the latest acquired trace for one channel; sample values in volts with their
-  time axis, and the time it was received.
+- **Acquisition Settings**: timebase (time/div), trigger position, trigger mode and acquisition
+  state at the scope.
+- **Waveform**: the latest acquired trace for one channel as read from the scope; sample values
+  in volts with their time axis, and the time it was received.
 
 ## Success Criteria *(mandatory)*
 
@@ -197,23 +178,25 @@ verify identity, channel settings and moving waveforms appear, all labelled as s
   the loss is reported within 5 seconds and the app neither freezes nor crashes.
 - **SC-005**: After a 10-minute live-view session, the scope's settings are identical to those
   before the session (zero changes caused by the app).
-- **SC-006**: Voltage and time values displayed for the scope's calibration signal match the
-  scope's own readings within 2% of full scale.
-- **SC-007**: Every acceptance scenario of User Stories 1–3 that does not involve the physical
-  scope can be demonstrated on a PC with no scope connected, using simulated mode.
+- **SC-006**: Placed side by side with the scope's screen, every displayed waveform matches the
+  scope's trace in position and shape within 0.1 division, and voltage/time values for the
+  scope's calibration signal match the scope's own readings within 2% of full scale.
 
 ## Assumptions
 
 - One user, one scope at a time: the LeCroy WaveRunner 610Zi in the lab, reachable over the
-  local network (currently at `192.168.0.9`).
+  local network (currently at `192.168.0.9`). The application has no simulated or demo mode;
+  without a reachable scope it only offers connecting.
 - Only the four analog channels (C1–C4) are in scope; math, memory, zoom and digital traces are
   out of scope for this feature.
 - Changing scope settings from the app (scale, timebase, trigger, run/stop) is out of scope and
   will be a later feature; this feature is read-only.
 - Saving, exporting or measuring waveforms is out of scope and will be a later feature.
-- For very long records, the display may show a reduced-resolution version of the waveform as
-  long as its visible shape is faithful; full-resolution data is a concern of a later
-  capture/export feature.
+- For very long records, the display may draw a reduced-resolution version of the real data as
+  long as its visible shape is faithful to the scope's trace; full-resolution data is a concern
+  of a later capture/export feature.
 - People may keep using the scope's front panel while the app is connected; the app adapts to
   their changes rather than preventing them.
+- Automated tests may substitute a fake instrument inside the test suite only (per the
+  constitution); this never affects what the application shows.
 - The application runs on the lab's Windows 11 PCs.

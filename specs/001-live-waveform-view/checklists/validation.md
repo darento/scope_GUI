@@ -17,7 +17,7 @@ actions, cable, visual comparison).
 | 6 | Scope Stop → "Stopped", no restart | Pending (front panel) | Automated: `test_stopped_scope` |
 | 7 | Pause / Resume | Verified (automated) | `test_pause_freezes_display_but_worker_keeps_running` |
 | 8 | Hide channel locally | Verified (automated) | `test_hiding_a_channel_is_local_only` |
-| 9 | Cable unplugged → Lost ≤ 5 s, reconnect | Pending (cable) | Automated: `test_persistent_failure_is_lost_within_5s`, `test_lost_marks_traces_stale` |
+| 9 | Cable unplugged → Lost ≤ 5 s, reconnect | Verified (Lost); reconnect pending | User unplugged the cable: Lost 0.9 s into the failing cycle, traces kept and marked STALE (log 15:52:58). Reconnect after replug covered by `test_cable_unplugged_shows_not_live`; to confirm on hardware |
 | 10 | ≥ 5 updates/s at 100k pts × 4 ch | Pending (needs record length change at scope) | Measured 8.2–8.7 updates/s at 10k pts × 3 ch on the real scope |
 | 11 | Window responsive during transfers/loss | Pending (interactive) | Automated: `test_window_responsive_while_connecting`; all I/O in worker thread |
 | 12 | Scope settings unchanged after session | Verified (30 s) | `test_live_read_only` (hardware): 24 settings identical before/after; every command sent matched the allowlist. 10-minute run pending |
@@ -28,3 +28,10 @@ actions, cable, visual comparison).
 - Trigger marker drew a plain `QPen` (non-cosmetic) whose 1-unit width is 1 *second* on the time
   axis, flooding the plot orange. Fixed by using `pg.mkPen`; regression test
   `test_all_pens_are_cosmetic`.
+- Cable unplug showed the raw Windows socket error (Spanish, `WinError 10054`) in the status and
+  the side panel still said "Acquiring". Socket errors now map to `ScopeLost` → "Network link to
+  the scope was interrupted"; the side panel shows "State: Not live (last known settings)".
+  Regression tests: `test_cable_unplugged_socket_reset`, `test_cable_unplugged_shows_not_live`,
+  `test_socket_reset_maps_to_scope_lost`.
+- Log grew ~624 KB in 28 s because every query was logged; per-command logging is now opt-in
+  (`SCOPE_GUI_DEBUG=1`), rotation raised to 5 MB × 5.

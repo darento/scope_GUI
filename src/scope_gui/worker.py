@@ -13,7 +13,14 @@ from dataclasses import replace
 from PySide6.QtCore import QObject, QThread, QTimer, Signal, Slot
 
 from .driver import ScopeDriver
-from .errors import ScopeBusy, ScopeError, ScopeProtocolError, ScopeTimeout, ScopeUnreachable
+from .errors import (
+    ScopeBusy,
+    ScopeError,
+    ScopeLost,
+    ScopeProtocolError,
+    ScopeTimeout,
+    ScopeUnreachable,
+)
 from .models import AcqState, ConnectionState, InstrumentIdentity, InstrumentSupport, TriggerMode
 from .settings import to_visa_resource
 
@@ -28,15 +35,16 @@ RATE_STALE_S = 2.0  # no acquisition for this long -> rate shows 0
 
 def user_message(exc: Exception) -> str:
     """English, user-facing text for a connection failure."""
-    if isinstance(exc, ScopeUnreachable):
+    if isinstance(exc, (ScopeUnreachable, ValueError)):
         return str(exc)
     if isinstance(exc, ScopeBusy):
         return "Instrument busy (used by another client) - try again"
     if isinstance(exc, ScopeTimeout):
         return "Instrument did not respond (timeout)"
-    if isinstance(exc, ValueError):
-        return str(exc)
-    return f"Connection failed: {exc}"
+    if isinstance(exc, ScopeLost):
+        return "Network link to the scope was interrupted"
+    # Anything else: keep the UI short and English; the details are in the log.
+    return "Communication error (see log for details)"
 
 
 class AcquisitionWorker(QObject):
@@ -215,7 +223,12 @@ class AcquisitionWorker(QObject):
         if self._failure_since is None:
             self._failure_since = cycle_start
         failing_for = time.monotonic() - self._failure_since
-        log.warning("I/O failure after %.1f s: %s", failing_for, exc)
+        log.warning(
+            "I/O failure after %.1f s: %r",
+            failing_for,
+            exc,
+            exc_info=not isinstance(exc, ScopeError),
+        )
         # A busy scope is retried; anything else gets one device-clear + *IDN? check (R4).
         healthy = not isinstance(exc, ScopeBusy) and self._driver.recover()
         if (healthy or isinstance(exc, ScopeBusy)) and (
@@ -224,4 +237,4 @@ class AcquisitionWorker(QObject):
             self._timer.start(IDLE_INTERVAL_MS)
             return
         self._drop_driver()
-        self._set_state(ConnectionState.LOST, f"Connection lost ({user_message(exc)})")
+        self._set_state(ConnectionState.LOST, user_message(exc))

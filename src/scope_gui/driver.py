@@ -17,6 +17,7 @@ from .errors import (
     CommandNotAllowed,
     ScopeBusy,
     ScopeError,
+    ScopeLost,
     ScopeProtocolError,
     ScopeTimeout,
     ScopeUnreachable,
@@ -254,6 +255,9 @@ class ScopeDriver:
             reply = self._resource.query(command).strip()
         except VisaIOError as exc:
             raise map_visa_error(exc, command) from exc
+        except OSError as exc:  # socket reset/aborted (e.g. cable unplugged), raised by pyvisa-py
+            log.warning("%s: network error %s", command, exc)
+            raise ScopeLost("network link to the scope was interrupted") from exc
         log.debug("reply %s", reply)
         return reply
 
@@ -266,3 +270,6 @@ class ScopeDriver:
             return self._resource.read_raw()
         except VisaIOError as exc:
             raise map_visa_error(exc, command) from exc
+        except OSError as exc:  # socket reset/aborted (e.g. cable unplugged), raised by pyvisa-py
+            log.warning("%s: network error %s", command, exc)
+            raise ScopeLost("network link to the scope was interrupted") from exc

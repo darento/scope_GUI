@@ -25,8 +25,8 @@ Enter the scope's address (remembered for next time), press **Connect**.
 - Untick a channel to hide it on the PC only; **Pause** freezes the PC display only.
 - The status bar shows the achieved update rate. It is limited by the scope's readout
   (~2.2 MB/s): about 5 updates/s at 100k points × 4 channels, ~1.5 updates/s at 500k × 3.
-- **Help → Open log folder** opens `%LOCALAPPDATA%\scope_gui\logs` (connections, errors and every
-  command sent).
+- **Help → Open log folder** opens `%LOCALAPPDATA%\scope_gui\logs` (connections and errors). Set
+  `SCOPE_GUI_DEBUG=1` before launching to also log every command sent.
 
 ## Tests
 

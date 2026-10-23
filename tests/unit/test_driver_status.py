@@ -85,3 +85,14 @@ def test_read_waveform(connected):
 )
 def test_waveform_timeout(nbytes, ms):
     assert waveform_timeout_ms(nbytes) == ms
+
+
+def test_socket_reset_maps_to_scope_lost(connected):
+    from scope_gui.errors import ScopeLost
+
+    driver, fake = connected
+    fake.reset = True
+    with pytest.raises(ScopeLost):
+        driver.read_status()
+    with pytest.raises(ScopeLost):
+        driver.read_waveform("C1")

@@ -103,6 +103,7 @@ class FakeVisaResource:
         self.cleared = 0
         self.closed = False
         self.busy = busy
+        self.reset = False  # raise a socket reset on every write (cable unplugged)
         self.fail_after = fail_after  # start failing after this many commands
         self.fail_count = fail_count  # number of consecutive failures (None = forever)
         self._pending: bytes | None = None
@@ -134,6 +135,9 @@ class FakeVisaResource:
     def write(self, command: str) -> None:
         if self.closed:
             raise VisaIOError(constants.StatusCode.error_connection_lost)
+        if self.reset:
+            # What pyvisa-py raised on the lab PC when the Ethernet cable was unplugged.
+            raise ConnectionResetError(10054, "connection forcibly closed by the remote host")
         if self.busy:
             raise VisaIOError(constants.StatusCode.error_resource_busy)
         self.sent.append(command)

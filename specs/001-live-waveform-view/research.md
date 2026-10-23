@@ -132,8 +132,9 @@ read simply times out. After a device clear (`viClear`), the session works norma
 
 - **Decision**: Last address in `QSettings` (Windows registry, per user). Logging via the stdlib
   `logging` module to a rotating file in `%LOCALAPPDATA%\scope_gui\logs\scope_gui.log`; a
-  "Help → Open log folder" action exposes it (FR-020). Every command sent is logged at DEBUG;
-  connection events and errors at INFO/WARNING.
+  "Help → Open log folder" action exposes it (FR-020). Connection events and errors at
+  INFO/WARNING; every command sent only with `SCOPE_GUI_DEBUG=1` (measured ~250 lines/s while
+  live, which would rotate away the history within minutes). Rotation 5 MB × 5.
 - **Rationale**: Zero extra dependencies; satisfies FR-001 and FR-020.
 
 ## R10. Channel colours

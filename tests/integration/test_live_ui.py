@@ -113,3 +113,19 @@ def test_disconnect_clears_view(connected):
     qtbot.waitUntil(lambda: window._state is ConnectionState.DISCONNECTED, timeout=3000)
     assert not window.scope_plot.is_curve_visible("C1")
     assert not window.scope_plot.stale_visible
+
+
+def test_cable_unplugged_shows_not_live(connected):
+    window, fake, qtbot = connected
+    fake.reset = True
+    qtbot.waitUntil(lambda: window._state is ConnectionState.LOST, timeout=6000)
+    assert window.connection_bar.status_text.text() == (
+        "Lost: Network link to the scope was interrupted"
+    )
+    assert window.side_panel.state_label.text().startswith("State: Not live")
+    assert window.scope_plot.stale_visible
+    # Reconnect without restarting once the link is back.
+    fake.reset = False
+    window.connection_bar.button.click()
+    qtbot.waitUntil(lambda: window._state is ConnectionState.CONNECTED, timeout=5000)
+    qtbot.waitUntil(lambda: not window.scope_plot.stale_visible, timeout=3000)

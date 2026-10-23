@@ -116,7 +116,7 @@ def test_persistent_failure_is_lost_within_5s(live):
     fake.fail_after, fake.fail_count = len(fake.sent), None
     qtbot.waitUntil(lambda: worker.state is ConnectionState.LOST, timeout=5000)
     assert time.monotonic() - start < 5
-    assert "Connection lost" in rec.states[-1][1]
+    assert rec.states[-1][1] == "Instrument did not respond (timeout)"
     assert fake.closed
 
 
@@ -157,3 +157,14 @@ def test_disconnect_stops_loop(live):
     qtbot.wait(500)
     assert len(fake.sent) == n
     assert worker.state is ConnectionState.DISCONNECTED
+
+
+def test_cable_unplugged_socket_reset(live):
+    """Regression: a socket reset (WinError 10054) must give a short English message."""
+    worker, fake, rec, qtbot = live
+    qtbot.waitUntil(lambda: bool(rec.statuses), timeout=2000)
+    start = time.monotonic()
+    fake.reset = True
+    qtbot.waitUntil(lambda: worker.state is ConnectionState.LOST, timeout=5000)
+    assert time.monotonic() - start < 5
+    assert rec.states[-1][1] == "Network link to the scope was interrupted"

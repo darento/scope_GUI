@@ -1,6 +1,7 @@
 """Entry point: ``uv run scope-gui`` or ``python -m scope_gui``."""
 
 import logging
+import os
 import sys
 from logging.handlers import RotatingFileHandler
 
@@ -14,14 +15,16 @@ LOG_FORMAT = "%(asctime)s %(levelname)-7s [%(threadName)s] %(name)s: %(message)s
 
 def setup_logging() -> None:
     handler = RotatingFileHandler(
-        log_dir() / "scope_gui.log", maxBytes=1_000_000, backupCount=5, encoding="utf-8"
+        log_dir() / "scope_gui.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8"
     )
     handler.setFormatter(logging.Formatter(LOG_FORMAT))
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(handler)
-    # Every command sent to the scope is recorded (FR-020).
-    logging.getLogger("scope_gui.driver").setLevel(logging.DEBUG)
+    # Connection events and errors are always logged (FR-020). Logging every query (~250 lines/s
+    # while live) would rotate the history away within minutes, so it is opt-in.
+    if os.environ.get("SCOPE_GUI_DEBUG"):
+        logging.getLogger("scope_gui.driver").setLevel(logging.DEBUG)
 
 
 def main() -> int:

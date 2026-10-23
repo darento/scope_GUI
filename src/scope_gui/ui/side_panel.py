@@ -116,6 +116,10 @@ class SidePanel(QWidget):
         self.trigger_label.setText(f"Trigger: {acq.trigger_mode.value}")
         self.state_label.setText(f"State: {status.acq_state.value}")
 
+    def set_not_live(self) -> None:
+        """Connection lost/failed: the shown settings are the last known ones, not live."""
+        self.state_label.setText("State: Not live (last known settings)")
+
     def clear(self) -> None:
         for name in CHANNELS:
             self.checkboxes[name].setEnabled(False)

@@ -125,6 +125,7 @@ class MainWindow(QMainWindow):
             self._set_stale(False)
         elif state in (ConnectionState.LOST, ConnectionState.ERROR):
             self._set_stale(True)
+            self.side_panel.set_not_live()
             self.view.update_rate_hz = 0.0
         elif state is ConnectionState.DISCONNECTED:
             self._set_stale(False)

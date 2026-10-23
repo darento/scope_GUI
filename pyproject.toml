@@ -1,0 +1,45 @@
+[project]
+name = "scope-gui"
+version = "0.1.0"
+description = "Live waveform mirror for the LeCroy WaveRunner 610Zi over LAN (read-only)"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "PySide6>=6.8",
+    "pyvisa>=1.14",
+    "pyvisa-py>=0.7",
+    "numpy>=2.1",
+    "pyqtgraph>=0.13.7",
+]
+
+[project.scripts]
+scope-gui = "scope_gui.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-qt>=4.4",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scope_gui"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = ["specs", ".specify", ".claude"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+markers = ["hardware: needs the real scope on the network"]
+addopts = "-m 'not hardware'"
+qt_api = "pyside6"

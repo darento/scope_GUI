@@ -27,22 +27,22 @@ run without hardware; hardware tests marked `@pytest.mark.hardware`).
 
 **Purpose**: uv project, package skeleton, test infrastructure
 
-- [ ] T001 Create `pyproject.toml`: project `scope-gui`, `requires-python = ">=3.13"`, src layout
+- [X] T001 Create `pyproject.toml`: project `scope-gui`, `requires-python = ">=3.13"`, src layout
   (hatchling build backend, package `scope_gui` in `src/`), runtime deps `PySide6`, `pyvisa`,
   `pyvisa-py`, `numpy`, `pyqtgraph`; dev dependency group `pytest`, `pytest-qt`, `ruff`; script
   `scope-gui = "scope_gui.__main__:main"`; `[tool.ruff]` line-length 100, target py313;
   `[tool.pytest.ini_options]` testpaths `tests`, marker `hardware: needs the real scope`,
   `addopts = "-m 'not hardware'"`, `qt_api = "pyside6"`
-- [ ] T002 Create package skeleton: `src/scope_gui/__init__.py` (`__version__ = "0.1.0"`),
+- [X] T002 Create package skeleton: `src/scope_gui/__init__.py` (`__version__ = "0.1.0"`),
   `src/scope_gui/ui/__init__.py`, and test folders `tests/unit/`, `tests/integration/`,
   `tests/hardware/`, `tests/fixtures/` (no `__init__.py`; pytest rootdir-based discovery)
-- [ ] T003 Pin interpreter and lock: write `.python-version` (`3.13`), run
+- [X] T003 Pin interpreter and lock: write `.python-version` (`3.13`), run
   `uv sync --python cpython-3.13-windows-x86_64` (64-bit; the machine's default 32-bit 3.11 fails
   to build wheels), commit `uv.lock`
-- [ ] T004 [P] Create `tests/conftest.py`: `--scope-address` option (default `192.168.0.9`);
+- [X] T004 [P] Create `tests/conftest.py`: `--scope-address` option (default `192.168.0.9`);
   fixture `scope_address`; when running with `-m hardware`, skip hardware tests with a clear
   reason if TCP port 111 on the address is unreachable within 3 s
-- [ ] T005 [P] Create fixture capture tool `tests/fixtures/capture_fixtures.py` (dev-only, run
+- [X] T005 [P] Create fixture capture tool `tests/fixtures/capture_fixtures.py` (dev-only, run
   manually against the real scope, uses only allowlisted queries from
   contracts/scope-driver.md): saves `tests/fixtures/wr610zi_replies.json` (exact reply strings of
   `*IDN?`, `CHDR?`, `CFMT?`, `CORD?`, `WFSU?`, `TDIV?`, `TRDL?`, `TRMD?`, `GRID?`, and
@@ -59,7 +59,7 @@ settings and logging — needed by both stories
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T006 Create `src/scope_gui/models.py` per data-model.md: enums `ConnectionState`
+- [X] T006 Create `src/scope_gui/models.py` per data-model.md: enums `ConnectionState`
   (`DISCONNECTED`, `CONNECTING`, `CONNECTED`, `LOST`, `ERROR`), `InstrumentSupport`
   (`SUPPORTED`, `UNTESTED_LECROY`, `NOT_LECROY`), `TriggerMode` (`AUTO`, `NORM`, `SINGLE`,
   `STOP`), `AcqState` (`ACQUIRING`, `WAITING_FOR_TRIGGER`, `STOPPED`); frozen dataclasses
@@ -70,14 +70,14 @@ settings and logging — needed by both stories
   `CHANNELS = ("C1","C2","C3","C4")` and `CHANNEL_COLORS` = C1 `#F5E400`, C2 `#FF5FAF`,
   C3 `#3FC8F0`, C4 `#40D040`; function `classify_support(identity)` per research R11
   (`LECROY`+`WR610ZI` → SUPPORTED, other `LECROY` → UNTESTED_LECROY, else NOT_LECROY)
-- [ ] T007 [P] Write `tests/unit/test_wavedesc.py`: parse the IEEE 488.2 block with and without
+- [X] T007 [P] Write `tests/unit/test_wavedesc.py`: parse the IEEE 488.2 block with and without
   the `C1:WF ALL,` header; parse `tests/fixtures/c1_desc.bin` and assert values measured in
   research R6 for the capture (COMM_TYPE byte, LOFIRST, WAVE_ARRAY_COUNT, gain, offset,
   HORIZ_INTERVAL, HORIZ_OFFSET, WAVE_SOURCE C1); decode `c1_wf_all.bin.gz` into volts with
   `volts = VERTICAL_GAIN × code − VERTICAL_OFFSET`; synthetic word (int16) and big-endian
   (HIFIRST) records; reject blocks not starting with `WAVEDESC`, template ≠ `LECROY_2_3`, or data
   length ≠ `point_count × bytes_per_sample` with `ScopeProtocolError`
-- [ ] T008 Implement `src/scope_gui/wavedesc.py` (pure functions, numpy only):
+- [X] T008 Implement `src/scope_gui/wavedesc.py` (pure functions, numpy only):
   `split_block(raw: bytes) -> bytes` (strip optional header up to `#`, parse `#9NNNNNNNNN`
   definite length); `parse_descriptor(payload) -> WaveformDescriptor` using LECROY_2_3 offsets —
   DESCRIPTOR_NAME@0 (16 s), TEMPLATE_NAME@16 (16 s), COMM_TYPE@32 (i16: 0 byte, 1 word),
@@ -91,10 +91,10 @@ settings and logging — needed by both stories
   the captured fixture; `decode_waveform(raw) -> (WaveformDescriptor, volts ndarray)` with data
   starting after WAVE_DESCRIPTOR+USER_TEXT+TRIGTIME_ARRAY+RIS_TIME_ARRAY+RES_ARRAY1 bytes;
   raise `ScopeProtocolError` (defined in `src/scope_gui/errors.py`, see T009) on any mismatch
-- [ ] T009 Create `src/scope_gui/errors.py` with `ScopeError` and subclasses `ScopeUnreachable`,
+- [X] T009 Create `src/scope_gui/errors.py` with `ScopeError` and subclasses `ScopeUnreachable`,
   `ScopeBusy`, `ScopeTimeout`, `ScopeProtocolError`, `ScopeLost`, and
   `CommandNotAllowed` (raised before any non-allowlisted command reaches the wire)
-- [ ] T010 Implement driver core in `src/scope_gui/driver.py`: `ALLOWED_COMMANDS` as compiled
+- [X] T010 Implement driver core in `src/scope_gui/driver.py`: `ALLOWED_COMMANDS` as compiled
   regexes exactly matching the allowlist in contracts/scope-driver.md (`*IDN?`, `CHDR?`,
   `CFMT?`, `CORD?`, `WFSU?`, `C[1-4]:TRA?`, `C[1-4]:VDIV?`, `C[1-4]:OFST?`, `C[1-4]:CPL?`,
   `TDIV?`, `TRDL?`, `TRMD?`, `GRID?`, `C[1-4]:WF? DESC`, `C[1-4]:WF? ALL`); private `_query(cmd)`
@@ -105,26 +105,26 @@ settings and logging — needed by both stories
   `parse_float(reply)`; constructor `ScopeDriver(resource_factory=None)` whose default factory
   opens `pyvisa.ResourceManager("@py").open_resource(address, timeout=ms)`. This is the ONLY
   module importing `pyvisa`
-- [ ] T011 [P] Create `tests/fakes.py` (tests only, never imported by `src/`): `FakeVisaResource`
+- [X] T011 [P] Create `tests/fakes.py` (tests only, never imported by `src/`): `FakeVisaResource`
   with `write`, `read`, `read_raw`, `query`, `clear`, `close`, `timeout`; loads replies from
   `tests/fixtures/wr610zi_replies.json` and the binary fixtures; records every command written
   in `.sent`; behaves like the real scope for unknown queries (raises a pyvisa timeout error, R4);
   knobs to simulate: unreachable, busy, timeout after N calls, changed settings, changing
   `TRIGGER_TIME`, `TRMD STOP`, channel on/off; plus `fake_factory(**knobs)` for
   `ScopeDriver(resource_factory=...)`
-- [ ] T012 [P] Write `tests/unit/test_driver_allowlist.py`: every allowlisted command passes; a
+- [X] T012 [P] Write `tests/unit/test_driver_allowlist.py`: every allowlisted command passes; a
   sample of writes (`C1:VDIV 1`, `TRMD STOP`, `*RST`, `CFMT DEF9,WORD,BIN`, `WFSU SP,10`,
   `INR?`) raise `CommandNotAllowed` and are never written to the fake; `parse_value` handles
   `C1:VDIV 1 V`, `C1:VOLT_DIV 1 V` (LONG), `1 V` (OFF), `TDIV 5E-6 S`
-- [ ] T013 [P] Implement `src/scope_gui/settings.py`: `QSettings("scope_gui", "scope_gui")`
+- [X] T013 [P] Implement `src/scope_gui/settings.py`: `QSettings("scope_gui", "scope_gui")`
   helpers `load_last_address() -> str` (default `192.168.0.9`) and `save_last_address(str)`;
   `to_visa_resource(address)` (IP/hostname → `TCPIP0::{host}::inst0::INSTR`, full VISA strings
   unchanged, strip whitespace, reject empty); `host_of(resource)`; `log_dir()` →
   `%LOCALAPPDATA%\scope_gui\logs` (created if missing)
-- [ ] T014 [P] Write `tests/unit/test_settings.py`: `to_visa_resource` for IP, hostname, full
+- [X] T014 [P] Write `tests/unit/test_settings.py`: `to_visa_resource` for IP, hostname, full
   VISA string, empty (error); `host_of`; last address round-trip using a temporary QSettings
   scope (`QSettings.setPath` to `tmp_path`)
-- [ ] T015 Create `src/scope_gui/__main__.py` with `setup_logging()` (root logger INFO, rotating
+- [X] T015 Create `src/scope_gui/__main__.py` with `setup_logging()` (root logger INFO, rotating
   file `log_dir()/scope_gui.log` 1 MB × 5 backups, format with timestamp/level/thread; DEBUG for
   `scope_gui.driver` so every command sent is recorded, FR-020) and `main()` that calls
   `setup_logging()`, creates `QApplication`, and (until US1) shows an empty `QMainWindow`

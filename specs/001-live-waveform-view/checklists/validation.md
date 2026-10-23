@@ -20,7 +20,7 @@ actions, cable, visual comparison).
 | 9 | Cable unplugged → Lost ≤ 5 s, reconnect | Verified | User unplugged the cable: Lost 0.9 s into the failing cycle, traces kept and marked STALE (log 15:52:58); after replugging, Connect worked without restarting the app. New loss message ("Network link to the scope was interrupted") to be seen after restarting with build `7dff75c`+ |
 | 10 | ≥ 5 updates/s at 100k pts × 4 ch | Pending (needs record length change at scope) | Measured 8.2–8.7 updates/s at 10k pts × 3 ch on the real scope |
 | 11 | Window responsive during transfers/loss | Pending (interactive) | Automated: `test_window_responsive_while_connecting`; all I/O in worker thread |
-| 12 | Scope settings unchanged after session | Verified (30 s) | `test_live_read_only` (hardware): 24 settings identical before/after; every command sent matched the allowlist. 10-minute run pending |
+| 12 | Scope settings unchanged after session | Verified (10 min) | `test_live_read_only --live-seconds 600` (hardware): 24 settings identical before/after 601 s live (9.9 updates/s, 3 ch × 5002 pts); every command sent matched the allowlist |
 | 13 | Log folder shows events and commands | Pending (restart needed) | Running instance predates `7dff75c`: it still logs every query, rotating 1 MB about every minute, so connection events were already rotated away. Re-check after restart |
 | 14 | Another program polls the scope (FR-021) | Verified | Second pyvisa client polling `TDIV?`/`C1:VDIV?`: foreign replies refused (never shown), app stopped after 6.4 s with "Another program is using the scope - reconnect when it has finished"; alone: 109 clean cycles in 15 s. `test_worker_conflict`, `test_reply_validation` |
 

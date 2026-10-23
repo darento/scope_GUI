@@ -4,7 +4,8 @@
 
 **Created**: 2026-10-23
 
-**Status**: Draft
+**Status**: Implemented (validated on the real scope 2026-10-23, see
+[checklists/validation.md](checklists/validation.md))
 
 **Input**: User description: "connect to the scope and show live waveforms" — the GUI must
 connect to the real scope and show what is being seen on it; no simulation.
@@ -31,6 +32,10 @@ connect to the real scope and show what is being seen on it; no simulation.
   keep the last traces marked stale, and tell the user another program is using the scope
   (the user reconnects manually). Changes made by another program *between* sessions or from
   the front panel are still followed as before.
+- Q: Validation measured ~2.2 refreshes/s at 100k points × 4 channels while the scope acquires
+  (it serves waveform data only between its own acquisitions; 8.75/s when stopped). Is that
+  acceptable? → A: Yes; SC-002 is amended to the measured, scope-bound behaviour. Speed-ups
+  (fewer queries per cycle, combined transfers) are a later feature.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -212,11 +217,14 @@ the same shape, position, amplitude and period, and that both update together.
 
 - **SC-001**: A user who knows the scope's address goes from launching the app to seeing live
   waveforms in under 30 seconds.
-- **SC-002**: With four channels on and up to 100,000 points per channel, the live view
-  refreshes at least 5 times per second on the lab network. For longer records the refresh rate
-  is bounded by the scope's readout speed (about 1.5 refreshes/s at 500,000 points × 3
-  channels); this is acceptable as long as the achieved rate is displayed. Waveforms are always
-  shown at the full resolution the scope provides.
+- **SC-002**: The live view is never slower than the scope makes its data available, and the
+  achieved rate is always displayed. While the scope acquires, it serves waveform data only
+  between its own acquisitions, so each channel read takes about one acquisition period and the
+  refresh rate is about the scope's acquisition rate ÷ (channels on + 1) (measured: ~2.2
+  refreshes/s at 100,000 points × 4 channels with the scope at 12.3 acquisitions/s). When the
+  data is ready (scope stopped) a full refresh of 4 channels × 100,000 points takes no more than
+  0.2 s (measured 8.75 refreshes/s). Waveforms are always shown at the full resolution the scope
+  provides.
 - **SC-003**: The window responds to user input within 0.2 seconds at all times, including
   during connection, data transfer and connection loss.
 - **SC-004**: In 100% of tested connection-loss scenarios (cable unplugged, scope powered off),

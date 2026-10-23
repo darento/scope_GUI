@@ -43,7 +43,7 @@ Auto trigger. Note its settings (or save a setup on the scope) to compare at the
 | 7 | In app: Pause, wait, Resume | PC freezes then resumes; scope keeps running | US2-5, FR-016 |
 | 8 | In app: uncheck C4 | C4 hidden on PC only; still on at scope | US2-6, FR-017 |
 | 9 | Unplug the Ethernet cable during live view | "Lost" within 5 s; traces marked STALE; replug → Connect works without restart | FR-007, SC-004 |
-| 10 | Set scope to 100k points (e.g. adjust timebase/memory), 4 channels on | Status bar shows ≥ 5 updates/s | SC-002 |
+| 10 | Set scope to 100k points (e.g. adjust timebase/memory), 4 channels on | Status bar shows the achieved rate, ≈ scope acquisition rate ÷ (channels + 1) while running; ≥ 5 updates/s with the scope stopped | SC-002 |
 | 11 | Drag/resize the window during transfers and during step 9 | Always responsive | FR-019, SC-003 |
 | 12 | After ~10 min of live view, compare scope settings with the start | Identical | SC-005, FR-018 |
 | 13 | Help → Open log folder | Log shows connect/disconnect/errors and the queries sent | FR-020 |

@@ -37,6 +37,15 @@ pyvisa + pyvisa-py on Windows 11. No setting was written to the scope during res
   channels refresh at ~5 Hz, meeting SC-002. At the scope's current 500k points the rate drops
   to ~1.5 Hz for 3 channels; the spec explicitly allows this ("update rate may drop, and the
   actual update rate is shown").
+- **Measured during validation** (100k pts × 4 ch, TDIV 1 µs, AUTO, 12.3 acquisitions/s):
+  while the scope acquires, a `WF? ALL` usually takes ~80 ms (one acquisition period) and only
+  sometimes ~14 ms; with the scope stopped every transfer takes 12–23 ms (~7 MB/s) and full
+  cycles run at 8.75/s. **The scope serves waveform data between its own acquisitions**, so
+  while running the update rate is about `acquisition rate / (enabled channels + 1)` (~2.2–2.7/s
+  here), below the ~5/s estimated above. The 2.2 MB/s figure above includes this waiting.
+  Possible later improvements (not in this feature): drop the separate descriptor read (one
+  period fewer per cycle); test whether one combined multi-channel query is served within a
+  single period.
 - **Alternatives**:
   - `WFSU SP,n` sparsing (faster, ~1/n data). **Rejected for this feature**: it is a write that
     changes the remote-interface setup shared with other clients, violating FR-018 /

@@ -240,3 +240,12 @@ def test_hover_readout_shows_time_and_volts(plot):
 def test_hover_hidden_without_status(plot):
     plot.show_readout(0.0, 0.0)
     assert plot.hover_text == ""
+
+
+def test_all_pens_are_cosmetic(qtbot):
+    """A non-cosmetic pen is sized in data units and floods a nanosecond time axis."""
+    plot = ScopePlot()
+    qtbot.addWidget(plot)
+    pens = [plot.trigger_line.pen, plot._grid.opts["pen"], plot._grid_centre.opts["pen"]]
+    pens += [curve.opts["pen"] for curve in plot.curves.values()]
+    assert all(pen.isCosmetic() for pen in pens)

@@ -3,7 +3,6 @@
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ..models import (
@@ -76,8 +75,8 @@ class ScopePlot(QWidget):
             self.plot.addItem(curve, ignoreBounds=True)
             self.curves[name] = curve
 
-        trigger_pen = QPen(QColor(TRIGGER_COLOR))
-        trigger_pen.setStyle(Qt.PenStyle.DashLine)
+        # mkPen is cosmetic (1 px); a plain QPen would be 1 *second* wide on this time axis.
+        trigger_pen = pg.mkPen(TRIGGER_COLOR, style=Qt.PenStyle.DashLine)
         self.trigger_line = pg.InfiniteLine(
             pos=0,
             angle=90,

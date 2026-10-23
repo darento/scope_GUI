@@ -282,12 +282,12 @@ is mirrored within 2 s (quickstart scenarios 4–12).
 
 ## Phase 5: Polish & Cross-Cutting Concerns
 
-- [ ] T035 [P] Write `README.md`: purpose, requirements (uv, 64-bit Python 3.13 via uv, LAN to
+- [X] T035 [P] Write `README.md`: purpose, requirements (uv, 64-bit Python 3.13 via uv, LAN to
   scope), `uv sync`, `uv run scope-gui`, `uv run pytest`, `uv run pytest -m hardware`, read-only
   guarantee, log location, link to `specs/001-live-waveform-view/quickstart.md`
-- [ ] T036 Run `uv run ruff check --fix` and `uv run ruff format`; fix remaining issues in
+- [X] T036 Run `uv run ruff check --fix` and `uv run ruff format`; fix remaining issues in
   `src/` and `tests/`
-- [ ] T037 Run `uv run pytest` over `tests/` (must pass with no scope) and
+- [X] T037 Run `uv run pytest` over `tests/` (must pass with no scope) and
   `uv run pytest -m hardware` (`tests/hardware/`) against the real scope; fix failures
 - [ ] T038 Run quickstart.md manual scenarios 1–13 on the real scope; verify channel colours
   against the scope screen and adjust `CHANNEL_COLORS` in `src/scope_gui/models.py` if they

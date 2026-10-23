@@ -19,6 +19,7 @@ from .errors import (
     ScopeError,
     ScopeLost,
     ScopeProtocolError,
+    ScopeReplyMismatch,
     ScopeTimeout,
     ScopeUnreachable,
 )
@@ -74,6 +75,22 @@ _BUSY_CODES = {
 
 _UNITS = {"V", "S", "SAMPLE", "SAMPLES", "HZ"}
 
+# Long header names used when CHDR is LONG (contracts/scope-driver.md "Reply validation").
+_LONG_NAMES = {
+    "TRA": "TRACE",
+    "VDIV": "VOLT_DIV",
+    "OFST": "OFFSET",
+    "CPL": "COUPLING",
+    "TDIV": "TIME_DIV",
+    "TRDL": "TRIG_DELAY",
+    "TRMD": "TRIG_MODE",
+    "CHDR": "COMM_HEADER",
+    "CFMT": "COMM_FORMAT",
+    "CORD": "COMM_ORDER",
+    "WFSU": "WAVEFORM_SETUP",
+    "WF": "WAVEFORM",
+}
+
 
 def is_allowed(command: str) -> bool:
     return any(pattern.fullmatch(command) for pattern in ALLOWED_COMMANDS)
@@ -95,6 +112,32 @@ def parse_value(reply: str) -> str:
 
 def parse_float(reply: str) -> float:
     return float(parse_value(reply))
+
+
+def expected_headers(command: str) -> set[str]:
+    """Reply headers accepted for a query: ``C1:VDIV?`` -> {``C1:VDIV``, ``C1:VOLT_DIV``}."""
+    head = command.split()[0].rstrip("?").upper()
+    prefix, _, name = head.rpartition(":")
+    prefix = prefix + ":" if prefix else ""
+    return {prefix + name, prefix + _LONG_NAMES.get(name, name)}
+
+
+def reply_matches(command: str, reply: bytes | str, header_mode: str) -> bool:
+    """True if ``reply`` answers ``command`` (FR-021, research R13).
+
+    Text replies are checked by their header (impossible with ``CHDR OFF``); binary replies
+    (``WF?``) must start with ``Cn:WF DESC,`` / ``Cn:WF ALL,`` or, with ``CHDR OFF``, ``#``.
+    """
+    binary = isinstance(reply, bytes)
+    text = reply[:40].decode("ascii", "replace") if binary else reply
+    if header_mode == "OFF":
+        return text.startswith("#") if binary else True
+    tokens = text.replace(",", " ", 1).split() if binary else text.split()
+    if not tokens or tokens[0].upper() not in expected_headers(command):
+        return False
+    if binary:  # "C1:WF DESC,#9..." -> second token must be the requested block
+        return len(tokens) > 1 and tokens[1].upper() == command.split()[1].upper()
+    return True
 
 
 def tcp_precheck(host: str, timeout: float = 3.0) -> None:
@@ -140,6 +183,7 @@ class ScopeDriver:
         self._factory = resource_factory or _default_factory
         self._resource = None
         self._expected_bytes: dict[str, int] = {}
+        self._header_mode = "SHORT"  # CHDR as read at connect; decides reply validation
 
     @property
     def is_open(self) -> bool:
@@ -155,10 +199,27 @@ class ScopeDriver:
         except VisaIOError as exc:
             raise map_visa_error(exc, "open") from exc
         try:
-            identity = parse_identity(self._query("*IDN?"))
+            # The header mode is not known yet: CHDR? decides how replies are validated.
+            self._header_mode = "UNKNOWN"
+            idn = self._query("*IDN?")
+            # "*IDN LECROY,..." or, with CHDR OFF, "LECROY,..." (no header before the first comma)
+            if not idn.upper().startswith("*IDN") and " " in idn.split(",")[0]:
+                self._mismatch("*IDN?", idn)
+            identity = parse_identity(idn)
             log.info("connected to %s", identity)
             # Read (never write) the remote-interface setup shared with other clients (R3).
-            setup = {cmd: self._query(cmd) for cmd in ("CHDR?", "CFMT?", "CORD?", "WFSU?")}
+            chdr = self._query("CHDR?")
+            mode = parse_value(chdr).upper()
+            headed = len(chdr.split()) > 1
+            if mode not in ("SHORT", "LONG", "OFF") or (
+                headed and not reply_matches("CHDR?", chdr, "SHORT")
+            ):
+                self._mismatch("CHDR?", chdr)
+            self._header_mode = "OFF" if mode == "OFF" else "SHORT"
+            if self._header_mode == "OFF":
+                log.warning("CHDR is OFF: text replies cannot be checked against their query")
+            setup = {"CHDR?": chdr}
+            setup.update({cmd: self._query(cmd) for cmd in ("CFMT?", "CORD?", "WFSU?")})
             for command, reply in setup.items():
                 log.info("%s -> %s", command, reply)
             wfsu = parse_value(setup["WFSU?"])
@@ -223,13 +284,17 @@ class ScopeDriver:
         return ScopeStatus(channels, acquisition, state, time.monotonic())
 
     def read_descriptor(self, channel: str) -> WaveformDescriptor:
-        desc = parse_descriptor(split_block(self._query_raw(f"{channel}:WF? DESC")))
+        command = f"{channel}:WF? DESC"
+        desc = parse_descriptor(split_block(self._query_raw(command)))
+        self._check_source(command, desc)
         self._expected_bytes[channel] = desc.data_offset + desc.point_count * desc.bytes_per_sample
         return desc
 
     def read_waveform(self, channel: str) -> Waveform:
         timeout = waveform_timeout_ms(self._expected_bytes.get(channel, 0))
-        desc, volts = decode_waveform(self._query_raw(f"{channel}:WF? ALL", timeout))
+        command = f"{channel}:WF? ALL"
+        desc, volts = decode_waveform(self._query_raw(command, timeout))
+        self._check_source(command, desc)
         self._expected_bytes[channel] = desc.data_offset + desc.point_count * desc.bytes_per_sample
         return Waveform(
             channel=channel,
@@ -247,6 +312,26 @@ class ScopeDriver:
         if self._resource is None:
             raise ScopeError("not connected")
 
+    def _check_source(self, command: str, desc: WaveformDescriptor) -> None:
+        if desc.source != command.split(":")[0]:
+            self._mismatch(command, f"waveform of {desc.source}")
+
+    def _mismatch(self, command: str, reply: bytes | str) -> None:
+        """Flush the shared reply queue and refuse the reply (FR-021)."""
+        shown = reply[:40] if isinstance(reply, bytes) else reply[:60]
+        log.warning("reply to %s does not match the query: %r", command, shown)
+        try:
+            self._resource.clear()
+        except Exception as exc:
+            log.debug("clear after mismatch: %s", exc)
+        raise ScopeReplyMismatch(f"reply to {command!r} belongs to another query")
+
+    def _validate(self, command: str, reply: bytes | str) -> None:
+        if self._header_mode == "UNKNOWN":  # during connect, checked in connect()
+            return
+        if not reply_matches(command, reply, self._header_mode):
+            self._mismatch(command, reply)
+
     def _query(self, command: str) -> str:
         self._check(command)
         log.debug("query %s", command)
@@ -259,6 +344,7 @@ class ScopeDriver:
             log.warning("%s: network error %s", command, exc)
             raise ScopeLost("network link to the scope was interrupted") from exc
         log.debug("reply %s", reply)
+        self._validate(command, reply)
         return reply
 
     def _query_raw(self, command: str, timeout_ms: int = QUERY_TIMEOUT_MS) -> bytes:
@@ -267,9 +353,11 @@ class ScopeDriver:
         try:
             self._resource.timeout = timeout_ms
             self._resource.write(command)
-            return self._resource.read_raw()
+            reply = self._resource.read_raw()
         except VisaIOError as exc:
             raise map_visa_error(exc, command) from exc
         except OSError as exc:  # socket reset/aborted (e.g. cable unplugged), raised by pyvisa-py
             log.warning("%s: network error %s", command, exc)
             raise ScopeLost("network link to the scope was interrupted") from exc
+        self._validate(command, reply)
+        return reply

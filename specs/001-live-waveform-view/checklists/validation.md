@@ -22,6 +22,7 @@ actions, cable, visual comparison).
 | 11 | Window responsive during transfers/loss | Pending (interactive) | Automated: `test_window_responsive_while_connecting`; all I/O in worker thread |
 | 12 | Scope settings unchanged after session | Verified (30 s) | `test_live_read_only` (hardware): 24 settings identical before/after; every command sent matched the allowlist. 10-minute run pending |
 | 13 | Log folder shows events and commands | Pending (restart needed) | Running instance predates `7dff75c`: it still logs every query, rotating 1 MB about every minute, so connection events were already rotated away. Re-check after restart |
+| 14 | Another program polls the scope (FR-021) | Verified | Second pyvisa client polling `TDIV?`/`C1:VDIV?`: foreign replies refused (never shown), app stopped after 6.4 s with "Another program is using the scope - reconnect when it has finished"; alone: 109 clean cycles in 15 s. `test_worker_conflict`, `test_reply_validation` |
 
 ## Issues found and fixed during validation
 
@@ -35,3 +36,8 @@ actions, cable, visual comparison).
   `test_socket_reset_maps_to_scope_lost`.
 - Log grew ~624 KB in 28 s because every query was logged; per-command logging is now opt-in
   (`SCOPE_GUI_DEBUG=1`), rotation raised to 5 MB × 5.
+- Two remote clients share the scope's reply queue (the VXI-11 lock is not enforced), so a
+  second program made the app receive its replies, and vice versa (found when the hardware test
+  ran while the app was connected). Every reply is now checked against its query; after 3 cycles
+  with foreign replies the app stops and says another program is using the scope (FR-021,
+  research R13).

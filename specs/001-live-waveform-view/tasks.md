@@ -296,6 +296,38 @@ is mirrored within 2 s (quickstart scenarios 4–12).
 
 ---
 
+## Phase 6: Multi-client protection (found during validation, FR-021, research R13)
+
+**Goal**: Never display a reply that belongs to another remote client; step back when another
+program is polling the scope.
+
+**Independent Test**: Unit/integration tests with a fake that hands out foreign replies; on the
+real scope, run a second client while the app is live → app reports "Another program is using
+the scope" and no wrong values are shown.
+
+- [X] T039 [P] Add `ScopeReplyMismatch(ScopeProtocolError)` to `src/scope_gui/errors.py`
+- [X] T040 Write `tests/unit/test_reply_validation.py`: accepted short/long headers for every
+  allowlisted text query; mismatched header (e.g. `C1:VDIV 1 V` for `TDIV?`) raises
+  `ScopeReplyMismatch` and triggers a device clear; `CHDR OFF` skips text validation; binary reply
+  with wrong prefix or text instead of a block raises; descriptor `WAVE_SOURCE` ≠ requested channel
+  raises; connect with a foreign reply raises
+- [X] T041 Implement reply validation in `src/scope_gui/driver.py` per contracts/scope-driver.md
+  "Reply validation": remember `CHDR` mode at connect; validate in `_query`/`_query_raw`; check
+  `WAVE_SOURCE` in `read_descriptor`/`read_waveform`; flush (device clear) on mismatch
+- [X] T042 Add knob `foreign_replies: int` to `tests/fakes.py` (next N queries get another
+  command's reply, like a second client stealing replies) and write
+  `tests/integration/test_worker_conflict.py`: a single mismatched cycle is discarded and polling
+  continues; 3 consecutive mismatched cycles → `LOST` with "Another program is using the scope -
+  reconnect when it has finished"; no mismatched value ever reaches `status_updated`
+- [X] T043 Implement in `src/scope_gui/worker.py`: count consecutive cycles failing with
+  `ScopeReplyMismatch` (`CONFLICT_AFTER = 3`), reset on a clean cycle, stop and report on reaching
+  it; map `ScopeReplyMismatch` in `user_message` (also for connect)
+- [X] T044 Re-run `uv run pytest` and `uv run pytest -m hardware`; on the real scope start a
+  second client while the app is live and record the result in
+  `specs/001-live-waveform-view/checklists/validation.md`
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

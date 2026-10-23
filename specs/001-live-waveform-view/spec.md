@@ -24,6 +24,13 @@ connect to the real scope and show what is being seen on it; no simulation.
 - Q: What language should the interface use? → A: English only.
 - Q: Will other programs control the scope remotely while the app is open? → A: Rarely; the app
   must coexist with them, adapting to their changes and retrying when the scope is busy.
+  *(Refined by the next answer after validation on the real scope.)*
+- Q: The scope mixes up replies between simultaneous remote clients and does not enforce
+  exclusive locks. What should the app do when another program is clearly talking to the scope
+  at the same time? → A: Validate every reply; after repeated mismatched replies, stop polling,
+  keep the last traces marked stale, and tell the user another program is using the scope
+  (the user reconnects manually). Changes made by another program *between* sessions or from
+  the front panel are still followed as before.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -106,6 +113,11 @@ the same shape, position, amplitude and period, and that both update together.
   unresponsive beyond the 5-second limit.
 - **Another program changes scope settings remotely** while the app is open: the app adapts
   (same as front-panel changes) and keeps working.
+- **Another program polls the scope at the same time** (verified: the scope hands replies to
+  whichever client reads first): a reply that does not match the question is never shown as
+  data. Isolated mismatches are discarded and retried; if they keep occurring, the app stops
+  polling, marks the traces stale and shows "Another program is using the scope - reconnect
+  when it has finished".
 - **Instrument at the address is not a supported LeCroy scope**: the app shows the identity it
   received, warns that the model is unsupported, and lets the user cancel or continue at their
   own risk.
@@ -175,6 +187,11 @@ the same shape, position, amplitude and period, and that both update together.
   connection attempts, data transfers and connection failures.
 - **FR-020**: Connection events and errors MUST be recorded in a log the user can consult when
   troubleshooting.
+- **FR-021**: Every reply from the scope MUST be checked to belong to the question that was
+  asked (e.g. a timebase reply to a timebase query, a channel 3 waveform to a channel 3
+  request); mismatched replies MUST never be displayed. After 3 consecutive cycles with
+  mismatched replies, the system MUST stop polling, keep the last waveforms marked stale, and
+  report that another program is using the scope.
 
 ### Key Entities
 
@@ -223,9 +240,10 @@ the same shape, position, amplitude and period, and that both update together.
 - For very long records, the display may draw a reduced-resolution version of the real data as
   long as its visible shape is faithful to the scope's trace; full-resolution data is a concern
   of a later capture/export feature.
-- People may keep using the scope's front panel while the app is connected, and other programs
-  occasionally control the scope remotely at the same time; the app adapts to their changes
-  rather than preventing them.
+- People may keep using the scope's front panel while the app is connected; the app adapts to
+  their changes rather than preventing them. Other remote programs cannot safely talk to the
+  scope at the same time as the app (the scope shares one reply queue between clients and does
+  not enforce locks); the app detects this and steps back (FR-021).
 - Automated tests may substitute a fake instrument inside the test suite only (per the
   constitution); this never affects what the application shows.
 - The application runs on the lab's Windows 11 PCs.

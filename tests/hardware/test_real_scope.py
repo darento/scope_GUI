@@ -64,7 +64,7 @@ def test_identity(scope_address):
         driver.close()
 
 
-def test_live_read_only(scope_address, qtbot):
+def test_live_read_only(scope_address, live_seconds, qtbot):
     """SC-005 / FR-018: a live session leaves every scope setting unchanged."""
     address = to_visa_resource(scope_address)
     before = snapshot(address)
@@ -87,7 +87,7 @@ def test_live_read_only(scope_address, qtbot):
     worker.connect_to(scope_address)
     assert worker.state is ConnectionState.CONNECTED
     try:
-        qtbot.wait(30_000)
+        qtbot.wait(live_seconds * 1000)
         assert worker.state is ConnectionState.CONNECTED
     finally:
         worker.close_connection()

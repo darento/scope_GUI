@@ -85,6 +85,14 @@ def with_timestamp(raw: bytes, stamp: bytes) -> bytes:
     return bytes(out)
 
 
+def as_channel(raw: bytes, channel: str) -> bytes:
+    """Copy of a little-endian WF reply relabelled as ``channel`` (header, WAVE_SOURCE)."""
+    start = raw.index(b"#")
+    out = bytearray(channel.encode() + raw[2:])  # "C1:WF ALL,#9..." -> "Cn:WF ALL,#9..."
+    struct.pack_into("<h", out, start + 11 + 344, int(channel[1]) - 1)
+    return bytes(out)
+
+
 def _timeout_error() -> VisaIOError:
     return VisaIOError(constants.StatusCode.error_timeout)
 
@@ -97,7 +105,7 @@ class FakeVisaResource:
         self.binary = {f"{ch}:WF? DESC": load_desc(ch) for ch in ("C1", "C2", "C3", "C4")}
         self.binary["C1:WF? ALL"] = load_c1_wf_all()
         for ch in ("C2", "C3", "C4"):
-            self.binary[f"{ch}:WF? ALL"] = self.binary["C1:WF? ALL"]
+            self.binary[f"{ch}:WF? ALL"] = as_channel(self.binary["C1:WF? ALL"], ch)
         self.timeout = 3000
         self.sent: list[str] = []
         self.cleared = 0
@@ -108,6 +116,9 @@ class FakeVisaResource:
         self.fail_count = fail_count  # number of consecutive failures (None = forever)
         self._pending: bytes | None = None
         self.trigger_seconds = None  # when set, WF replies carry this TRIGGER_TIME seconds
+        # Next N queries get the reply meant for another client's *IDN? (like a second program
+        # polling the scope through the shared reply queue, research R13).
+        self.foreign_replies = 0
 
     # --- knobs -----------------------------------------------------------------------------
     def set_reply(self, command: str, reply: str) -> None:
@@ -144,7 +155,12 @@ class FakeVisaResource:
         if self._should_fail():
             self._pending = None
             return
-        if command in self.binary:
+        if self.foreign_replies > 0:
+            self.foreign_replies -= 1
+            self._pending = (self.replies["*IDN?"] + "\n").encode()
+            if command == "*IDN?":  # stolen identity: hand out another client's setting reply
+                self._pending = b"C1:VDIV 1 V\n"
+        elif command in self.binary:
             self._pending = self._binary(command)
         elif command in self.replies:
             self._pending = (self.replies[command] + "\n").encode()

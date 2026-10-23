@@ -71,3 +71,15 @@ does not change instrument settings.
   `WAVEDESC` block, whose layout follows the `LECROY_2_3` template.
 - Never send a query not in the allowlist: the scope does not answer unknown queries and the
   read times out (R4).
+
+## Reply validation (FR-021, research R13)
+
+- Text queries: when `CHDR` is `SHORT` or `LONG`, the reply's first token MUST equal the query
+  without `?` in short form (`C1:VDIV`) or long form (`C1:VOLT_DIV`). Long forms: `TRA`→`TRACE`,
+  `VDIV`→`VOLT_DIV`, `OFST`→`OFFSET`, `CPL`→`COUPLING`, `TDIV`→`TIME_DIV`, `TRDL`→`TRIG_DELAY`,
+  `TRMD`→`TRIG_MODE`, `CHDR`→`COMM_HEADER`, `CFMT`→`COMM_FORMAT`, `CORD`→`COMM_ORDER`,
+  `WFSU`→`WAVEFORM_SETUP`, `WF`→`WAVEFORM`; `GRID` and `*IDN` are the same in both.
+- Binary queries: the reply MUST start with `Cn:WF DESC,` / `Cn:WF ALL,` (or the `WAVEFORM`
+  long form; with `CHDR OFF`, directly with `#`), and the descriptor's `WAVE_SOURCE` MUST be `Cn`.
+- On mismatch: raise `ScopeReplyMismatch` (subclass of `ScopeProtocolError`) after a device clear
+  to flush stale replies.

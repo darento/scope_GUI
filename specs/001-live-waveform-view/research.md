@@ -158,3 +158,34 @@ read simply times out. After a device clear (`viClear`), the session works norma
   `scope-gui` (`uv run scope-gui`). Tests use a fake VISA resource (in `tests/` only) that replays
   real responses captured from this scope (descriptor bytes, setting replies) as fixtures.
 - **Rationale**: Constitution technology constraints and Principle IV.
+
+## R13. Simultaneous remote clients (found during validation)
+
+*(measured, 2026-10-23)* With the app polling and a second client connecting, the second client
+got `*IDN?` answered but its next `CHDR?` timed out, and the app logged "no binary block in
+reply": **the scope serves one reply queue shared by all VXI-11 links**, so replies go to
+whichever client reads first. A VXI-11 exclusive lock (`viLock`, pyvisa-py sends
+`device_lock`) is accepted instantly but **not enforced**: a second link was still served while
+the lock was held.
+
+- **Decision**: Validate every reply against its query (FR-021): text replies must carry the
+  query's header (short or long form, e.g. `TDIV`/`TIME_DIV`) when `CHDR` is not `OFF`; binary
+  replies must start with `Cn:WF DESC,`/`Cn:WF ALL,` (or `Cn:WAVEFORM …`) and their descriptor's
+  `WAVE_SOURCE` must equal the requested channel. A mismatch raises `ScopeReplyMismatch`, the
+  driver flushes the queue (device clear) and the worker discards the cycle. After 3
+  consecutive mismatched cycles the worker stops polling and reports "Another program is using
+  the scope - reconnect when it has finished" (traces stale).
+- **Rationale**: A stolen reply can be well-formed (e.g. `C1:VDIV 1 V` returned for `TDIV?`)
+  and would otherwise silently show wrong scales; stepping back protects the other program too.
+- **Alternatives**: Exclusive VXI-11 lock (rejected: not enforced by this scope); keep retrying
+  with a warning (rejected by user: the other program may still receive wrong replies);
+  auto-resume (rejected by user).
+- **Limitation**: with `CHDR OFF` text replies cannot be validated (only binary ones); logged
+  as a warning at connect.
+- **Validated** *(measured, two real clients)*: with a second program polling `TDIV?`/`C1:VDIV?`,
+  the app caught foreign replies (`'TDIV 50E-9 S'` for `C4:TRA?`, `b'C1:VDIV 1 V'` for
+  `C3:WF? ALL`), never displayed them, and stopped after 6.4 s with the conflict message. The
+  other symptom is **timeouts**: the other program reads first and takes our reply. So a
+  connection lost after foreign replies (since the last clean cycle) also reports the conflict,
+  and a connect timeout says "another program may be using the scope". Each device clear takes
+  ~1 s on this scope. Alone, the app ran 109 clean cycles in 15 s (no false positives).

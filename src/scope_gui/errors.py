@@ -27,3 +27,7 @@ class ScopeLost(ScopeError):
 
 class CommandNotAllowed(ScopeError):
     """A command outside the read-only allowlist was about to be sent."""
+
+
+class ScopeReplyMismatch(ScopeProtocolError):
+    """A reply belongs to another query (another remote client shares the scope, R13)."""

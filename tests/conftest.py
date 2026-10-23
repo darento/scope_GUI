@@ -9,6 +9,17 @@ def pytest_addoption(parser):
         default="192.168.0.9",
         help="IP/hostname of the real scope used by hardware tests",
     )
+    parser.addoption(
+        "--live-seconds",
+        type=int,
+        default=30,
+        help="duration of the hardware live read-only session (SC-005 asks for 600)",
+    )
+
+
+@pytest.fixture(scope="session")
+def live_seconds(request):
+    return request.config.getoption("--live-seconds")
 
 
 @pytest.fixture(scope="session")

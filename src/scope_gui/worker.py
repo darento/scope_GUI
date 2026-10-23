@@ -18,6 +18,7 @@ from .errors import (
     ScopeError,
     ScopeLost,
     ScopeProtocolError,
+    ScopeReplyMismatch,
     ScopeTimeout,
     ScopeUnreachable,
 )
@@ -31,6 +32,8 @@ WAIT_FOR_TRIGGER_S = 1.0  # NORM/SINGLE with no new trigger for this long -> wai
 LOST_AFTER_S = 5.0  # unrecovered failures for this long -> connection lost (FR-007)
 RATE_WINDOW = 6  # acquisitions used for the update-rate average
 RATE_STALE_S = 2.0  # no acquisition for this long -> rate shows 0
+CONFLICT_AFTER = 3  # consecutive cycles with foreign replies -> another program (FR-021)
+CONFLICT_MESSAGE = "Another program is using the scope - reconnect when it has finished"
 
 
 def user_message(exc: Exception) -> str:
@@ -43,6 +46,8 @@ def user_message(exc: Exception) -> str:
         return "Instrument did not respond (timeout)"
     if isinstance(exc, ScopeLost):
         return "Network link to the scope was interrupted"
+    if isinstance(exc, ScopeReplyMismatch):
+        return CONFLICT_MESSAGE
     # Anything else: keep the UI short and English; the details are in the log.
     return "Communication error (see log for details)"
 
@@ -74,6 +79,7 @@ class AcquisitionWorker(QObject):
         self._last_new_at = time.monotonic()
         self._acq_times: deque[float] = deque(maxlen=RATE_WINDOW)
         self._failure_since: float | None = None
+        self._conflicts = 0  # consecutive cycles that got another query's reply
 
     @property
     def state(self) -> ConnectionState:
@@ -101,7 +107,10 @@ class AcquisitionWorker(QObject):
                 self._set_state(ConnectionState.DISCONNECTED)
             else:
                 log.warning("connect failed: %s", exc)
-                self._set_state(ConnectionState.ERROR, user_message(exc))
+                message = user_message(exc)
+                if isinstance(exc, ScopeTimeout):  # port open but reply lost: likely shared (R13)
+                    message += " - another program may be using the scope"
+                self._set_state(ConnectionState.ERROR, message)
             return
         if self._cancelled.is_set():
             self._drop_driver()
@@ -172,6 +181,16 @@ class AcquisitionWorker(QObject):
         cycle_start = time.monotonic()
         try:
             transferred = self._poll()
+        except ScopeReplyMismatch as exc:
+            # Never shown (the driver refused it); step back if it keeps happening (FR-021).
+            self._conflicts += 1
+            log.warning("cycle discarded (%d/%d): %s", self._conflicts, CONFLICT_AFTER, exc)
+            if self._conflicts >= CONFLICT_AFTER:
+                self._drop_driver()
+                self._set_state(ConnectionState.LOST, CONFLICT_MESSAGE)
+                return
+            self._timer.start(IDLE_INTERVAL_MS)
+            return
         except ScopeProtocolError as exc:
             log.warning("skipping malformed data: %s", exc)
             transferred = False
@@ -181,6 +200,7 @@ class AcquisitionWorker(QObject):
             self._handle_failure(exc, cycle_start)
             return
         self._failure_since = None
+        self._conflicts = 0
         self._timer.start(0 if transferred else IDLE_INTERVAL_MS)
 
     def _poll(self) -> bool:
@@ -237,4 +257,7 @@ class AcquisitionWorker(QObject):
             self._timer.start(IDLE_INTERVAL_MS)
             return
         self._drop_driver()
-        self._set_state(ConnectionState.LOST, user_message(exc))
+        # Foreign replies since the last clean cycle: the lost replies went to another program.
+        self._set_state(
+            ConnectionState.LOST, CONFLICT_MESSAGE if self._conflicts else user_message(exc)
+        )

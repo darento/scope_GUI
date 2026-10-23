@@ -289,7 +289,7 @@ is mirrored within 2 s (quickstart scenarios 4–12).
   `src/` and `tests/`
 - [X] T037 Run `uv run pytest` over `tests/` (must pass with no scope) and
   `uv run pytest -m hardware` (`tests/hardware/`) against the real scope; fix failures
-- [ ] T038 Run quickstart.md manual scenarios 1–13 on the real scope; verify channel colours
+- [X] T038 Run quickstart.md manual scenarios 1–13 on the real scope; verify channel colours
   against the scope screen and adjust `CHANNEL_COLORS` in `src/scope_gui/models.py` if they
   differ (research R10); record results in
   `specs/001-live-waveform-view/checklists/validation.md`

@@ -208,24 +208,24 @@ is mirrored within 2 s (quickstart scenarios 4–12).
 
 ### Tests for User Story 2
 
-- [ ] T024 [P] [US2] Write `tests/unit/test_driver_status.py`: `read_status()` from fixtures
+- [X] T024 [P] [US2] Write `tests/unit/test_driver_status.py`: `read_status()` from fixtures
   returns `ChannelSettings` for C1–C4 (enabled flags, VDIV, OFST, CPL) and
   `AcquisitionSettings` (TDIV 5e-6, TRDL −9.2e-6, TRMD AUTO, GRID SINGLE); `read_descriptor("C1")`
   sends exactly `C1:WF? DESC`; `read_waveform("C1")` sends `C1:WF? ALL` with timeout
   `2000 + bytes/1000` ms capped at 10000 and returns volts matching wavedesc decoding
-- [ ] T025 [P] [US2] Write `tests/unit/test_geometry.py`: `x_range(acq)` =
+- [X] T025 [P] [US2] Write `tests/unit/test_geometry.py`: `x_range(acq)` =
   `(−TRDL − 5·TDIV, −TRDL + 5·TDIV)` equals `(−15.8e-6, 34.2e-6)` for the fixture values (matches
   `HORIZ_OFFSET`, research R6); `volts_to_div(v, ch) = (v + offset) / volts_per_div` — for C1
   (1 V/div, offset −3.01 V): 3.01 V → 0 div (screen centre), 4.01 V → +1 div; `div_to_volts`
   is its inverse; y range is ±4 div
-- [ ] T026 [P] [US2] Write `tests/integration/test_worker_live.py` (pytest-qt + fake): one status
+- [X] T026 [P] [US2] Write `tests/integration/test_worker_live.py` (pytest-qt + fake): one status
   emitted per cycle (cycle ≤ 1 s); full records fetched only for enabled channels and only when
   `TRIGGER_TIME` changes; `TRMD STOP` → `AcqState.STOPPED` and no `WF? ALL` sent; `NORM` with
   unchanged trigger time > 1 s → `WAITING_FOR_TRIGGER`; settings change in fake appears in next
   status; one timeout followed by successful `recover()` keeps CONNECTED (auto-retry, spec
   clarification Q5); persistent failure → `LOST` within 5 s; `rate_updated` reflects received
   acquisitions; every command in `fake.sent` matches `ALLOWED_COMMANDS`
-- [ ] T027 [P] [US2] Write `tests/integration/test_live_ui.py` (pytest-qt): only enabled
+- [X] T027 [P] [US2] Write `tests/integration/test_live_ui.py` (pytest-qt): only enabled
   channels have visible curves, coloured per `CHANNEL_COLORS`; unchecking a channel hides only
   the PC curve and sends nothing to the fake; Pause stops curve updates while worker keeps
   emitting, Resume continues; "No channels enabled on the scope" shown when none enabled;
@@ -234,14 +234,14 @@ is mirrored within 2 s (quickstart scenarios 4–12).
 
 ### Implementation for User Story 2
 
-- [ ] T028 [US2] Add to `src/scope_gui/models.py`: `x_range(acq) -> (float, float)`,
+- [X] T028 [US2] Add to `src/scope_gui/models.py`: `x_range(acq) -> (float, float)`,
   `volts_to_div(volts, ch: ChannelSettings)`, `div_to_volts(div, ch)`, `Y_RANGE_DIV = (-4, 4)`
-- [ ] T029 [US2] Implement `ScopeDriver.read_status()`, `read_descriptor(ch)`,
+- [X] T029 [US2] Implement `ScopeDriver.read_status()`, `read_descriptor(ch)`,
   `read_waveform(ch)` in `src/scope_gui/driver.py` using only allowlisted queries; waveform
   timeout `min(2000 + expected_bytes/1000, 10000)` ms where expected bytes come from the last
   descriptor; return `ScopeStatus`/`WaveformDescriptor`/`Waveform` (with `received_at =
   time.monotonic()`)
-- [ ] T030 [US2] Implement the live loop in `src/scope_gui/worker.py`: after CONNECTED, a
+- [X] T030 [US2] Implement the live loop in `src/scope_gui/worker.py`: after CONNECTED, a
   `QTimer` (single-shot, re-armed; 200 ms when idle, immediate after transfers, ≤ 1 s between
   status reads) runs a cycle: `read_status()` → emit `status_updated(ScopeStatus)`; if `STOP` →
   `STOPPED`, skip transfers; else `read_descriptor(first enabled channel)` and compare
@@ -250,7 +250,7 @@ is mirrored within 2 s (quickstart scenarios 4–12).
   trigger for > 1 s); emit `rate_updated(float)` (moving average over last 5 acquisitions); on
   `ScopeTimeout`/`ScopeBusy` call `recover()` and retry; if not recovered within 5 s since the
   first failure → `LOST` with message; `disconnect()`/`shutdown()` stop the timer and close
-- [ ] T031 [P] [US2] Implement `src/scope_gui/ui/scope_plot.py` `ScopePlot(QWidget)` with
+- [X] T031 [P] [US2] Implement `src/scope_gui/ui/scope_plot.py` `ScopePlot(QWidget)` with
   pyqtgraph (`pg.setConfigOptions(antialias=False)`): black background, mouse pan/zoom disabled,
   X fixed to `x_range(acq)` in seconds (SI-prefixed axis), Y fixed to ±4 div, grid lines every
   division (10 × 8) plus dotted centre lines; one `PlotDataItem` per channel with
@@ -261,17 +261,17 @@ is mirrored within 2 s (quickstart scenarios 4–12).
   "Scope uses a multi-grid layout; shown here on one grid", and "STALE — not live" (with traces
   at 40 % opacity); methods `set_status(ScopeStatus)`, `set_waveforms(dict)`,
   `set_hidden(set[str])`, `set_stale(bool)`
-- [ ] T032 [P] [US2] Implement `src/scope_gui/ui/side_panel.py` `SidePanel(QWidget)`: per channel
+- [X] T032 [P] [US2] Implement `src/scope_gui/ui/side_panel.py` `SidePanel(QWidget)`: per channel
   a checkbox in the channel colour (disabled + "(off)" when off at the scope) with
   "V/div · offset · coupling" text; acquisition box with time/div, trigger mode
   (Auto/Normal/Single/Stopped) and state (Acquiring / Waiting for trigger / Stopped); Pause/Resume
   toggle button; signals `hidden_changed(set[str])`, `paused_changed(bool)`
-- [ ] T033 [US2] Wire live view in `src/scope_gui/ui/main_window.py`: replace placeholder with
+- [X] T033 [US2] Wire live view in `src/scope_gui/ui/main_window.py`: replace placeholder with
   `ScopePlot` + `SidePanel` (splitter); keep `LiveViewState` (paused, hidden_channels,
   update_rate_hz, stale) per data-model.md; drop `waveforms_updated` while paused; status bar
   "{rate:.1f} updates/s · last update HH:MM:SS"; set stale on LOST/ERROR, clear on CONNECTED;
   layout per contracts/ui.md
-- [ ] T034 [US2] Write `tests/hardware/test_real_scope.py::test_live_read_only` (marked
+- [X] T034 [US2] Write `tests/hardware/test_real_scope.py::test_live_read_only` (marked
   `hardware`): snapshot all allowlisted setting replies, run the worker live for 30 s, snapshot
   again and assert identical (SC-005, FR-018); assert every command sent matched the allowlist;
   assert at least one waveform per enabled channel was received; log achieved rate

@@ -1,20 +1,35 @@
 """Main window: wires the worker thread to the widgets (contracts/ui.md)."""
 
 import logging
+from dataclasses import dataclass, field
+from datetime import datetime
 
-from PySide6.QtCore import QThread, QUrl, Signal
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox
+from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QSplitter
 
 from ..driver import ScopeDriver
-from ..models import ConnectionState, InstrumentIdentity
+from ..models import ConnectionState, InstrumentIdentity, ScopeStatus, Waveform
 from ..settings import log_dir, save_last_address
 from ..worker import AcquisitionWorker
 from .connection_bar import ConnectionBar
+from .scope_plot import ScopePlot
+from .side_panel import SidePanel
 
 log = logging.getLogger(__name__)
 
 SHUTDOWN_GRACE_MS = 1000
+
+
+@dataclass
+class LiveViewState:
+    """GUI-only view state; never sent to the scope (data-model.md)."""
+
+    paused: bool = False
+    hidden_channels: set[str] = field(default_factory=set)
+    update_rate_hz: float = 0.0
+    stale: bool = False
+    last_update: datetime | None = None
 
 
 class MainWindow(QMainWindow):
@@ -29,14 +44,29 @@ class MainWindow(QMainWindow):
         self.resize(1200, 700)
         self._pending_address = ""
         self._state = ConnectionState.DISCONNECTED
+        self.view = LiveViewState()
 
         self.connection_bar = ConnectionBar(address)
-        self.setMenuWidget(None)
         self._build_menu()
         toolbar = self.addToolBar("Connection")
         toolbar.setMovable(False)
         toolbar.addWidget(self.connection_bar)
-        self.setCentralWidget(QLabel("Connect to the scope to see its waveforms."))
+
+        self.scope_plot = ScopePlot()
+        self.side_panel = SidePanel()
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(self.scope_plot)
+        splitter.addWidget(self.side_panel)
+        splitter.setStretchFactor(0, 1)
+        splitter.setCollapsible(0, False)
+        self.setCentralWidget(splitter)
+
+        self.rate_label = QLabel()
+        self.statusBar().addPermanentWidget(self.rate_label)
+        self._update_rate_label()
+
+        self.side_panel.hidden_changed.connect(self._on_hidden_changed)
+        self.side_panel.paused_changed.connect(self._on_paused_changed)
 
         self.worker_thread = QThread(self)
         self.worker_thread.setObjectName("scope-io")
@@ -50,6 +80,9 @@ class MainWindow(QMainWindow):
         self.worker.state_changed.connect(self._on_state_changed)
         self.worker.identity_received.connect(self.connection_bar.set_identity)
         self.worker.confirmation_needed.connect(self._on_confirmation_needed)
+        self.worker.status_updated.connect(self._on_status)
+        self.worker.waveforms_updated.connect(self._on_waveforms)
+        self.worker.rate_updated.connect(self._on_rate)
 
         self.connection_bar.connect_requested.connect(self._on_connect_requested)
         self.connection_bar.disconnect_requested.connect(self._on_disconnect_requested)
@@ -74,14 +107,61 @@ class MainWindow(QMainWindow):
     def open_log_folder(self) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_dir())))
 
+    def _on_hidden_changed(self, hidden: set[str]) -> None:
+        self.view.hidden_channels = set(hidden)
+        self.scope_plot.set_hidden(self.view.hidden_channels)
+
+    def _on_paused_changed(self, paused: bool) -> None:
+        # Pausing freezes only the PC display; the worker and the scope keep running (FR-016).
+        self.view.paused = paused
+        self._update_rate_label()
+
     # --- worker signals ---------------------------------------------------------------------
     def _on_state_changed(self, state: ConnectionState, message: str) -> None:
         self._state = state
         self.connection_bar.set_state(state, message)
         if state is ConnectionState.CONNECTED:
             save_last_address(self._pending_address)
+            self._set_stale(False)
+        elif state in (ConnectionState.LOST, ConnectionState.ERROR):
+            self._set_stale(True)
+            self.view.update_rate_hz = 0.0
+        elif state is ConnectionState.DISCONNECTED:
+            self._set_stale(False)
+            self.scope_plot.clear()
+            self.side_panel.clear()
+            self.view.update_rate_hz = 0.0
+            self.view.last_update = None
+        self._update_rate_label()
         if message and state in (ConnectionState.ERROR, ConnectionState.LOST):
             self.statusBar().showMessage(message)
+
+    def _on_status(self, status: ScopeStatus) -> None:
+        self.side_panel.set_status(status)
+        if not self.view.paused:
+            self.scope_plot.set_status(status)
+
+    def _on_waveforms(self, waveforms: dict[str, Waveform]) -> None:
+        if self.view.paused:
+            return
+        self.scope_plot.set_waveforms(waveforms)
+        self.view.last_update = datetime.now()
+        self._update_rate_label()
+
+    def _on_rate(self, rate: float) -> None:
+        self.view.update_rate_hz = rate
+        self._update_rate_label()
+
+    def _set_stale(self, stale: bool) -> None:
+        self.view.stale = stale
+        self.scope_plot.set_stale(stale)
+
+    def _update_rate_label(self) -> None:
+        last = self.view.last_update.strftime("%H:%M:%S") if self.view.last_update else "—"
+        text = f"{self.view.update_rate_hz:.1f} updates/s · last update {last}"
+        if self.view.paused:
+            text = f"PAUSED · {text}"
+        self.rate_label.setText(text)
 
     def _on_confirmation_needed(self, identity: InstrumentIdentity) -> None:
         self.request_confirm.emit(self.ask_continue(identity))

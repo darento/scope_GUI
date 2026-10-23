@@ -70,6 +70,21 @@ def with_trigger_seconds(raw: bytes, seconds: float) -> bytes:
     return bytes(out)
 
 
+_TIMESTAMP = slice(296, 312)  # TRIGGER_TIME field within the WAVEDESC payload
+
+
+def _timestamp(raw: bytes) -> bytes:
+    start = raw.index(b"#") + 11
+    return raw[start + _TIMESTAMP.start : start + _TIMESTAMP.stop]
+
+
+def with_timestamp(raw: bytes, stamp: bytes) -> bytes:
+    start = raw.index(b"#") + 11
+    out = bytearray(raw)
+    out[start + _TIMESTAMP.start : start + _TIMESTAMP.stop] = stamp
+    return bytes(out)
+
+
 def _timeout_error() -> VisaIOError:
     return VisaIOError(constants.StatusCode.error_timeout)
 
@@ -108,7 +123,9 @@ class FakeVisaResource:
         return False
 
     def _binary(self, command: str) -> bytes:
-        raw = self.binary[command]
+        # The fixtures were captured at different moments; like the real scope, every reply of
+        # one acquisition must carry the same TRIGGER_TIME, so all use the WF? ALL timestamp.
+        raw = with_timestamp(self.binary[command], _timestamp(self.binary["C1:WF? ALL"]))
         if self.trigger_seconds is not None:
             raw = with_trigger_seconds(raw, self.trigger_seconds)
         return raw

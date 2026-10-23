@@ -7,14 +7,33 @@ Every command sent must match ALLOWED_COMMANDS: read-only queries verified on th
 import logging
 import re
 import socket
+import time
 
 import pyvisa
 from pyvisa import constants
 from pyvisa.errors import VisaIOError
 
-from .errors import CommandNotAllowed, ScopeBusy, ScopeError, ScopeTimeout, ScopeUnreachable
-from .models import InstrumentIdentity
+from .errors import (
+    CommandNotAllowed,
+    ScopeBusy,
+    ScopeError,
+    ScopeProtocolError,
+    ScopeTimeout,
+    ScopeUnreachable,
+)
+from .models import (
+    CHANNELS,
+    AcqState,
+    AcquisitionSettings,
+    ChannelSettings,
+    InstrumentIdentity,
+    ScopeStatus,
+    TriggerMode,
+    Waveform,
+    WaveformDescriptor,
+)
 from .settings import host_of
+from .wavedesc import decode_waveform, parse_descriptor, split_block
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +61,8 @@ ALLOWED_COMMANDS = tuple(
 
 QUERY_TIMEOUT_MS = 3000
 RECOVER_TIMEOUT_MS = 1500
+WAVEFORM_TIMEOUT_BASE_MS = 2000
+WAVEFORM_TIMEOUT_MAX_MS = 10000
 VXI11_PORT = 111
 DEFAULT_WFSU = "SP,0,NP,0,FP,0,SN,0"
 
@@ -95,6 +116,11 @@ def parse_identity(reply: str) -> InstrumentIdentity:
     return InstrumentIdentity(*fields[:4])
 
 
+def waveform_timeout_ms(expected_bytes: int) -> int:
+    """2 s plus 1 ms per KB, capped at 10 s (research R8)."""
+    return min(WAVEFORM_TIMEOUT_BASE_MS + expected_bytes // 1000, WAVEFORM_TIMEOUT_MAX_MS)
+
+
 def _default_factory(address: str, timeout_ms: int):
     rm = pyvisa.ResourceManager("@py")
     return rm.open_resource(address, timeout=timeout_ms)
@@ -112,6 +138,7 @@ class ScopeDriver:
     def __init__(self, resource_factory=None) -> None:
         self._factory = resource_factory or _default_factory
         self._resource = None
+        self._expected_bytes: dict[str, int] = {}
 
     @property
     def is_open(self) -> bool:
@@ -167,6 +194,50 @@ class ScopeDriver:
         except Exception as exc:
             log.warning("recover failed: %s", exc)
             return False
+
+    # --- live data ---------------------------------------------------------------------------
+    def read_status(self) -> ScopeStatus:
+        """Channel and acquisition settings; acq_state is STOPPED or ACQUIRING (worker refines)."""
+        try:
+            channels = tuple(
+                ChannelSettings(
+                    name=ch,
+                    enabled=parse_value(self._query(f"{ch}:TRA?")).upper() == "ON",
+                    volts_per_div=parse_float(self._query(f"{ch}:VDIV?")),
+                    offset=parse_float(self._query(f"{ch}:OFST?")),
+                    coupling=parse_value(self._query(f"{ch}:CPL?")),
+                )
+                for ch in CHANNELS
+            )
+            mode = TriggerMode[parse_value(self._query("TRMD?")).upper()]
+            acquisition = AcquisitionSettings(
+                time_per_div=parse_float(self._query("TDIV?")),
+                trigger_delay=parse_float(self._query("TRDL?")),
+                trigger_mode=mode,
+                grid_mode=parse_value(self._query("GRID?")),
+            )
+        except (ValueError, KeyError) as exc:
+            raise ScopeProtocolError(f"unexpected setting reply: {exc}") from exc
+        state = AcqState.STOPPED if mode is TriggerMode.STOP else AcqState.ACQUIRING
+        return ScopeStatus(channels, acquisition, state, time.monotonic())
+
+    def read_descriptor(self, channel: str) -> WaveformDescriptor:
+        desc = parse_descriptor(split_block(self._query_raw(f"{channel}:WF? DESC")))
+        self._expected_bytes[channel] = desc.data_offset + desc.point_count * desc.bytes_per_sample
+        return desc
+
+    def read_waveform(self, channel: str) -> Waveform:
+        timeout = waveform_timeout_ms(self._expected_bytes.get(channel, 0))
+        desc, volts = decode_waveform(self._query_raw(f"{channel}:WF? ALL", timeout))
+        self._expected_bytes[channel] = desc.data_offset + desc.point_count * desc.bytes_per_sample
+        return Waveform(
+            channel=channel,
+            volts=volts,
+            t0=desc.horiz_offset,
+            dt=desc.horiz_interval,
+            trigger_time=desc.trigger_time,
+            received_at=time.monotonic(),
+        )
 
     # --- low level ---------------------------------------------------------------------------
     def _check(self, command: str) -> None:

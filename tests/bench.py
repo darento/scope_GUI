@@ -21,7 +21,7 @@ from synthetic_scope import Scene, SyntheticScope, fit_vertical_scale, synthetic
 
 from scope_gui import driver as driver_module
 from scope_gui import settings
-from scope_gui.__main__ import setup_logging
+from scope_gui.__main__ import setup_application, setup_logging
 from scope_gui.analysis import Edge, Kind, Level, MeasurementSpec
 from scope_gui.driver import ScopeDriver
 from scope_gui.ui.main_window import MainWindow
@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging()
     app = QApplication.instance() or QApplication(sys.argv[:1])
-    app.setApplicationName("Scope GUI bench")
+    setup_application(app, "Scope GUI bench", "oncovision.scope_gui.bench")
     window, _scope = build_window(args)
     window.show()
     return app.exec()

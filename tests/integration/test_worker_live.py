@@ -23,6 +23,7 @@ class Recorder:
         worker.state_changed.connect(lambda s, m: self.states.append((s, m)))
         worker.status_updated.connect(self.statuses.append)
         worker.waveforms_updated.connect(self.waveforms.append)
+        worker.waveforms_updated.connect(lambda _w: worker.waveforms_consumed())
         worker.rate_updated.connect(self.rates.append)
 
 
@@ -168,3 +169,21 @@ def test_cable_unplugged_socket_reset(live):
     qtbot.waitUntil(lambda: worker.state is ConnectionState.LOST, timeout=5000)
     assert time.monotonic() - start < 5
     assert rec.states[-1][1] == "Network link to the scope was interrupted"
+
+
+def test_next_waveforms_wait_for_the_gui(qtbot):
+    """A slow GUI lowers the rate; acquisitions never pile up in its queue (Principle II)."""
+    fake = FakeVisaResource()
+    worker = AcquisitionWorker(lambda: ScopeDriver(resource_factory=fake_factory(fake)))
+    received = []
+    worker.waveforms_updated.connect(received.append)  # never says it is done
+    worker.connect_to("192.168.0.9")
+    try:
+        qtbot.waitUntil(lambda: len(received) == 1, timeout=3000)
+        fake.trigger_seconds = 50.0  # a new acquisition is available
+        qtbot.wait(300)
+        assert len(received) == 1
+        worker.waveforms_consumed()
+        qtbot.waitUntil(lambda: len(received) == 2, timeout=3000)
+    finally:
+        worker.close_connection()

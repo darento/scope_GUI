@@ -13,6 +13,7 @@ from ..models import ConnectionState, InstrumentIdentity, ScopeStatus, Waveform
 from ..settings import log_dir, save_last_address
 from ..worker import AcquisitionWorker
 from .connection_bar import ConnectionBar
+from .histogram_panel import HistogramPanel
 from .measurements_panel import MeasurementsPanel
 from .scope_plot import ScopePlot
 from .side_panel import SidePanel
@@ -65,6 +66,9 @@ class MainWindow(QMainWindow):
         # Analysis docks (specs/002-waveform-analysis/contracts/ui.md).
         self.measurements_panel = MeasurementsPanel()
         self.measurements_dock = self._add_dock("Measurements", self.measurements_panel)
+        self.histogram_panel = HistogramPanel()
+        self.histogram_dock = self._add_dock("Histogram", self.histogram_panel)
+        self.splitDockWidget(self.measurements_dock, self.histogram_dock, Qt.Orientation.Horizontal)
         self._build_menu()
 
         self.rate_label = QLabel()
@@ -80,6 +84,7 @@ class MainWindow(QMainWindow):
         self.side_panel.reset_view_requested.connect(self.scope_plot.reset_view)
         self.measurements_panel.gate_changed.connect(self._on_gate_changed)
         self.measurements_panel.selection_changed.connect(self._on_measurement_selected)
+        self.measurements_panel.processed.connect(self._refresh_histogram)
         self.scope_plot.level_dragged.connect(self.measurements_panel.update_level)
         self.measurements_panel.export_finished.connect(
             lambda _ok, message: self.statusBar().showMessage(message)
@@ -117,6 +122,7 @@ class MainWindow(QMainWindow):
     def _build_menu(self) -> None:
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.measurements_dock.toggleViewAction())
+        view_menu.addAction(self.histogram_dock.toggleViewAction())
         self.view_menu = view_menu
         help_menu = self.menuBar().addMenu("&Help")
         help_menu.addAction("Open log folder", self.open_log_folder)
@@ -151,6 +157,11 @@ class MainWindow(QMainWindow):
 
     def _on_measurement_selected(self) -> None:
         self.scope_plot.set_level_lines(self.measurements_panel.selected_spec)
+        self._refresh_histogram()
+
+    def _refresh_histogram(self) -> None:
+        panel = self.measurements_panel
+        self.histogram_panel.show_measurements(panel.specs, panel.stats, panel.selected_row)
 
     def _on_paused_changed(self, paused: bool) -> None:
         # Pausing freezes only the PC display; the worker and the scope keep running (FR-016).
@@ -189,13 +200,16 @@ class MainWindow(QMainWindow):
             self.scope_plot.set_status(status)
 
     def _on_waveforms(self, waveforms: dict[str, Waveform]) -> None:
-        if self.view.paused:
-            return
-        self.scope_plot.set_waveforms(waveforms)
-        # Every received channel is measured, also those hidden on the PC (FR-008).
-        self.measurements_panel.process(waveforms, self.scope_plot.gate())
-        self.view.last_update = datetime.now()
-        self._update_rate_label()
+        try:
+            if self.view.paused:
+                return
+            self.scope_plot.set_waveforms(waveforms)
+            # Every received channel is measured, also those hidden on the PC (FR-008).
+            self.measurements_panel.process(waveforms, self.scope_plot.gate())
+            self.view.last_update = datetime.now()
+            self._update_rate_label()
+        finally:
+            self.worker.waveforms_consumed()
 
     def _on_rate(self, rate: float) -> None:
         self.view.update_rate_hz = rate

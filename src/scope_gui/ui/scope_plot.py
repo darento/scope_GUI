@@ -9,7 +9,7 @@ import math
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from ..analysis import Kind, MeasurementSpec
@@ -24,6 +24,7 @@ from ..models import (
     volts_to_div,
     x_range,
 )
+from .persistence import Persistence
 
 pg.setConfigOptions(antialias=False)
 
@@ -51,6 +52,8 @@ def _overlay(parent: QWidget, text: str, style: str) -> QLabel:
 
 class ScopePlot(QWidget):
     level_dragged = Signal(int, float)  # level index (0 or 1) of the selected measurement, volts
+    PERSISTENCE_Z = -8  # above the grid, below the traces
+    PERSISTENCE_REPAINT_MS = 100  # image() costs 10-25 ms: not for every acquisition
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -63,6 +66,7 @@ class ScopePlot(QWidget):
         self._gate_on = False
         self._level_lines: list[tuple[pg.InfiniteLine, int, str]] = []
         self._level_volts: dict[int, float] = {}
+        self.persistence: Persistence | None = None  # None: persistence off
 
         self.plot_widget = pg.PlotWidget(background="k")
         self.plot: pg.PlotItem = self.plot_widget.getPlotItem()
@@ -109,6 +113,16 @@ class ScopePlot(QWidget):
         )
         self.trigger_line.setZValue(-5)
         self.plot.addItem(self.trigger_line, ignoreBounds=True)
+
+        # Fading density of recent acquisitions behind the traces (FR-018, research R7).
+        self.persistence_image = pg.ImageItem(axisOrder="row-major")
+        self.persistence_image.setZValue(self.PERSISTENCE_Z)
+        self.persistence_image.setVisible(False)
+        self.plot.addItem(self.persistence_image, ignoreBounds=True)
+        self._persistence_timer = QTimer(self)
+        self._persistence_timer.setSingleShot(True)
+        self._persistence_timer.setInterval(self.PERSISTENCE_REPAINT_MS)
+        self._persistence_timer.timeout.connect(self._paint_persistence)
 
         # Measurement gate: shaded, follows the cursors, not draggable itself (FR-016).
         self.gate_region = pg.LinearRegionItem(movable=False, brush=pg.mkBrush(*GATE_BRUSH))
@@ -391,13 +405,46 @@ class ScopePlot(QWidget):
 
     def set_persistence(self, depth: int | None) -> None:
         """Fade over ``depth`` acquisitions; None = infinite, 0 = off."""
-        self._persistence_depth = depth
+        if depth == 0:
+            self.persistence = None
+            self._persistence_timer.stop()
+            self.persistence_image.clear()
+            self.persistence_image.setVisible(False)
+            return
+        if self.persistence is None:
+            self.persistence = Persistence(depth=depth)
+        else:
+            self.persistence.set_depth(depth)
+        self.persistence_image.setVisible(True)
 
     def _restart_persistence(self) -> None:
-        pass
+        """The bins no longer match the screen (view or scale changed, disconnected)."""
+        if self.persistence is not None:
+            self.persistence.reset()
+            self._persistence_timer.stop()
+            self.persistence_image.clear()
 
     def _add_persistence(self) -> None:
-        pass
+        if self.persistence is None or self._status is None:
+            return
+        vb = self.plot.vb
+        width, height = int(vb.width()), int(vb.height())
+        if width < 2 or height < 2:
+            return
+        (x0, x1), (y0, y1) = vb.viewRange()
+        self.persistence.set_size(width, height)  # both reset the map only when they change
+        self.persistence.set_view((x0, x1), (y0, y1))
+        visible = {n: w for n, w in self._waveforms.items() if self.is_curve_visible(n)}
+        self.persistence.add_waveforms(visible, self._status)
+        if not self._persistence_timer.isActive():
+            self._persistence_timer.start()
+
+    def _paint_persistence(self) -> None:
+        if self.persistence is None or self.persistence.view is None:
+            return
+        (x0, x1), (y0, y1) = self.persistence.view
+        self.persistence_image.setImage(self.persistence.image(), autoLevels=False)
+        self.persistence_image.setRect(x0, y0, x1 - x0, y1 - y0)
 
     @property
     def no_channels_visible(self) -> bool:

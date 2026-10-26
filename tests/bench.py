@@ -17,7 +17,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
-from synthetic_scope import Scene, SyntheticScope, synthetic_factory
+from synthetic_scope import Scene, SyntheticScope, fit_vertical_scale, synthetic_factory
 
 from scope_gui import driver as driver_module
 from scope_gui import settings
@@ -79,6 +79,8 @@ def build_window(args: argparse.Namespace) -> tuple[MainWindow, SyntheticScope]:
         settings.save_measurements(DEMO_MEASUREMENTS)
     driver_module.tcp_precheck = lambda host, timeout=3.0: None  # nothing to reach
     scene = Scene(points=args.points, mean_pe=args.mean_pe)
+    if args.mean_pe > Scene.mean_pe:  # larger pulses: raise C2/C3 V/div so they stay on screen
+        fit_vertical_scale(scene)
     scope = SyntheticScope(scene, rate_hz=args.rate, seed=args.seed)
     factory = synthetic_factory(scope)
     window = MainWindow(ADDRESS, driver_factory=lambda: ScopeDriver(factory))

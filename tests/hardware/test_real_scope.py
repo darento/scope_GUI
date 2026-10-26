@@ -82,6 +82,7 @@ def test_live_read_only(scope_address, live_seconds, qtbot):
     rates: list[float] = []
     statuses = []
     worker.waveforms_updated.connect(received.append)
+    worker.waveforms_updated.connect(lambda _w: worker.waveforms_consumed())
     worker.rate_updated.connect(rates.append)
     worker.status_updated.connect(statuses.append)
     worker.connect_to(scope_address)
@@ -102,3 +103,49 @@ def test_live_read_only(scope_address, live_seconds, qtbot):
     points = received[-1][enabled[0]].volts.size
     log.warning("live rate %.2f updates/s, %d channels x %d points", rate, len(enabled), points)
     print(f"\nlive rate {rate:.2f} updates/s with {len(enabled)} channels x {points} points")
+
+
+def test_analysis_session_read_only(scope_address, live_seconds, qtbot):
+    """SC-007 / FR-020: a session using every analysis tool sends only allowlisted queries."""
+    from scope_gui.analysis import Kind, Level, MeasurementSpec
+    from scope_gui.ui.main_window import MainWindow
+
+    address = to_visa_resource(scope_address)
+    before = snapshot(address)
+    sent: list[str] = []
+
+    def factory():
+        return ScopeDriver(
+            resource_factory=lambda a, t: RecordingResource(
+                driver_module._default_factory(a, t), sent
+            )
+        )
+
+    window = MainWindow(scope_address, driver_factory=factory)
+    qtbot.addWidget(window)
+    window.show()
+    panel = window.measurements_panel
+    kinds = [
+        Kind.AMPLITUDE, Kind.BASE, Kind.TOP, Kind.MAXIMUM, Kind.MINIMUM,
+        Kind.MEAN, Kind.AREA, Kind.RISE_TIME, Kind.FREQUENCY,
+    ]  # fmt: skip
+    for kind in kinds:
+        panel.add(MeasurementSpec(kind, "C1"))
+    panel.add(MeasurementSpec(Kind.DELTA_T, "C1", Level(0.5, True), "C1", Level(0.5, True)))
+    window.side_panel.cursors_checkbox.setChecked(True)
+    panel.set_gate_between_cursors(True)
+    window.side_panel.persistence_combo.setCurrentText("100")
+    try:
+        window.connection_bar.button.click()
+        qtbot.waitUntil(lambda: window._state is ConnectionState.CONNECTED, timeout=10000)
+        qtbot.wait(live_seconds * 1000)
+        assert window._state is ConnectionState.CONNECTED
+        assert panel.trigger_log.size > 0
+    finally:
+        window.close()
+    after = snapshot(address)
+
+    assert after == before
+    assert sent and all(is_allowed(cmd) for cmd in sent), sorted(set(sent))
+    rate = window.view.update_rate_hz
+    print(f"\nanalysis session: {panel.trigger_log.size} acquisitions measured, {rate:.2f}/s")

@@ -21,6 +21,7 @@ def live(qtbot):
     states, statuses = [], []
     worker.state_changed.connect(lambda s, m: states.append((s, m)))
     worker.status_updated.connect(statuses.append)
+    worker.waveforms_updated.connect(lambda _w: worker.waveforms_consumed())  # like the GUI
     worker.connect_to("192.168.0.9")
     qtbot.waitUntil(lambda: bool(statuses), timeout=2000)
     yield worker, fake, states, statuses, qtbot

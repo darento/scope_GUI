@@ -232,3 +232,65 @@ def test_clear_keeps_zoom_and_cursors(plot):
     plot.set_cursors_visible(True)
     plot.clear()
     assert plot.zoomed and plot.cursors_visible
+
+
+# --- persistence (FR-018, research R7) ------------------------------------------------------------
+
+
+def feed(plot, n: int = 1, **status) -> None:
+    from test_scope_plot import all_waveforms
+
+    plot.set_status(make_status(**status))
+    for _ in range(n):
+        plot.set_waveforms(all_waveforms())
+
+
+def test_persistence_off_by_default(plot):
+    feed(plot)
+    assert plot.persistence is None and not plot.persistence_image.isVisible()
+
+
+def test_persistence_draws_behind_the_traces(plot, qtbot):
+    plot.set_persistence(100)
+    feed(plot, 3)
+    assert plot.persistence.count == 3
+    image = plot.persistence_image
+    assert image.image is None  # repainted at most every PERSISTENCE_REPAINT_MS, not per trace
+    qtbot.waitUntil(lambda: image.image is not None, timeout=1000)
+    assert image.isVisible() and image.image[..., 3].any()
+    assert image.zValue() < min(curve.zValue() for curve in plot.curves.values())
+    rect = image.mapRectToParent(image.boundingRect())
+    (x0, x1), (y0, y1) = plot.plot.vb.viewRange()
+    assert (rect.left(), rect.right()) == pytest.approx((x0, x1))
+    assert (rect.top(), rect.bottom()) == pytest.approx((y0, y1))
+
+
+def test_persistence_restarts_on_zoom_reset_and_scale_change(plot):
+    plot.set_persistence(None)
+    feed(plot, 2)
+    wheel(plot, 2)
+    assert plot.persistence.count == 0
+    feed(plot, 2)
+    plot.reset_view()
+    assert plot.persistence.count == 0
+    feed(plot, 2)
+    feed(plot, 0, volts_per_div={"C1": 2.0})
+    assert plot.persistence.count == 0
+
+
+def test_persistence_depth_change_keeps_the_map_and_off_removes_it(plot):
+    plot.set_persistence(10)
+    feed(plot, 2)
+    plot.set_persistence(1000)
+    assert plot.persistence.count == 2
+    plot.set_persistence(0)
+    assert plot.persistence is None and not plot.persistence_image.isVisible()
+
+
+def test_clear_empties_persistence(plot):
+    plot.set_persistence(100)
+    feed(plot, 2)
+    plot.clear()
+    assert plot.persistence.count == 0
+    plot.set_waveforms({"C1": ramp("C1")})  # no status: nothing added
+    assert plot.persistence.count == 0

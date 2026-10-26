@@ -293,7 +293,7 @@ of 2 ns and σ within 15 % of 114 ps (quickstart B2, B4, B5)
   `ScatterPlotItem` of the latest 5,000 pairs; stats line "N … · outside … · mean … · σ …" plus
   "fit μ … σ … FWHM …" or "no fit"; `show(spec, statistics, others)` refresh entry point; make
   T022 pass
-- [ ] T025 [US3] Wire in `src/scope_gui/ui/main_window.py`: Histogram dock (bottom, next to the
+- [X] T025 [US3] Wire in `src/scope_gui/ui/main_window.py`: Histogram dock (bottom, next to the
   Measurements dock) with View menu entry; refresh it after each processed acquisition and on
   `selection_changed`; no refresh while paused (FR-023)
 
@@ -319,7 +319,7 @@ double-click resets; cursors 100 ns apart read Δt 100 ns and 1/Δt 10 MHz (quic
   acquisition for N in 10 / 100 / 1000 and none for Infinite; `reset()` empties the map;
   output RGB uses each channel's colour scaled by √density; channels outside the view add
   nothing
-- [ ] T027 [P] [US4] Write `tests/integration/test_scope_plot_tools.py` (pytest-qt):
+- [X] T027 [P] [US4] Write `tests/integration/test_scope_plot_tools.py` (pytest-qt):
   a manual range change sets the zoomed flag and later `set_status` calls do not move the view
   (the grid still follows); Reset view and double-click restore the scope screen and clear the
   flag (FR-014); cursors on → two lines at 1/3 and 2/3 of the view, readout shows Δt, 1/Δt and
@@ -344,7 +344,7 @@ double-click resets; cursors 100 ns apart read Δt 100 ns and 1/Δt 10 MHz (quic
   1.3 ms per channel at 2.5M points),
   fade by (1 − 1/N) or none for infinite, `reset()`, `image()` → RGB colouring each layer with
   `models.CHANNEL_COLORS` at √density and summing; make T026 pass
-- [ ] T030 [US4] Extend `src/scope_gui/ui/scope_plot.py` per R8–R9 and contracts/ui.md
+- [X] T030 [US4] Extend `src/scope_gui/ui/scope_plot.py` per R8–R9 and contracts/ui.md
   "Plot mouse": enable ViewBox mouse in `RectMode`, wheel zoom, middle-drag pan, context menu
   off; `sigRangeChangedManually` sets the zoomed flag and `_update_range` skips setting the
   range while zoomed; `reset_view()` and double-click; cursors (`InfiniteLine` "1"/"2") and
@@ -362,7 +362,7 @@ double-click resets; cursors 100 ns apart read Δt 100 ns and 1/Δt 10 MHz (quic
 - [X] T032 [US4] Add the Gate combo (Whole record / Between cursors) to
   `src/scope_gui/ui/measurements_panel.py` and `update_level(index, volts)` that replaces the
   selected spec's level, clears only its statistics and saves the list; make T028 pass
-- [ ] T033 [US4] Wire in `src/scope_gui/ui/main_window.py`: Display group → scope plot
+- [X] T033 [US4] Wire in `src/scope_gui/ui/main_window.py`: Display group → scope plot
   (cursors, persistence, reset view); gate combo ↔ cursors and pass `scope_plot.gate()` to
   `process`; selected measurement → `scope_plot.set_level_lines`; `level_dragged` →
   `measurements_panel.update_level`; persistence fed only when not paused
@@ -406,10 +406,10 @@ three names, empty cells where missed (quickstart B11)
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T037 [P] Add to `tests/hardware/test_real_scope.py` a read-only session with analysis
+- [X] T037 [P] Add to `tests/hardware/test_real_scope.py` a read-only session with analysis
   active (10 measurements, histogram shown, cursors and persistence on): every written command
   is in `ALLOWED_COMMANDS` (SC-007, FR-020)
-- [ ] T038 [P] Update `README.md`: analysis features (measurements and their definitions per
+- [X] T038 [P] Update `README.md`: analysis features (measurements and their definitions per
   data-model.md, statistics, histogram/trend/correlation, zoom, cursors, gate, level lines,
   persistence, export); the synthetic bench as a developer tool
   (`uv run python tests/bench.py`, options, separate `bench.ini`), stating it is not a mode of

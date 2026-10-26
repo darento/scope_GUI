@@ -1,7 +1,8 @@
 """Worker that owns the scope connection; lives in its own QThread (Constitution Principle II).
 
 The GUI talks to it only through queued signals/slots, except ``abort()``, which is thread-safe
-and used to cancel a pending connect or to break a blocked read on shutdown (research R8).
+and used to cancel a pending connect or to break a blocked read on shutdown (research R8), and
+``waveforms_consumed()``, which lets the next waveforms go out (at most one set queued).
 """
 
 import logging
@@ -28,6 +29,7 @@ from .settings import to_visa_resource
 log = logging.getLogger(__name__)
 
 IDLE_INTERVAL_MS = 200  # between cycles when nothing new was transferred
+BUSY_GUI_INTERVAL_MS = 5  # re-check while the GUI is still handling the last waveforms
 WAIT_FOR_TRIGGER_S = 1.0  # NORM/SINGLE with no new trigger for this long -> waiting (R5)
 LOST_AFTER_S = 5.0  # unrecovered failures for this long -> connection lost (FR-007)
 RATE_WINDOW = 6  # acquisitions used for the update-rate average
@@ -66,6 +68,9 @@ class AcquisitionWorker(QObject):
         self._driver: ScopeDriver | None = None
         self._state = ConnectionState.DISCONNECTED
         self._cancelled = threading.Event()
+        # Set while the GUI has no waveforms waiting: a slow GUI then lowers the rate instead
+        # of queueing acquisitions without end and stopping responding (Principle II).
+        self._consumed = threading.Event()
         self._pending_identity: InstrumentIdentity | None = None
         # Child of self, so it moves to the worker thread together with the worker.
         self._timer = QTimer(self)
@@ -80,6 +85,11 @@ class AcquisitionWorker(QObject):
         self._acq_times: deque[float] = deque(maxlen=RATE_WINDOW)
         self._failure_since: float | None = None
         self._conflicts = 0  # consecutive cycles that got another query's reply
+        self._consumed.set()
+
+    def waveforms_consumed(self) -> None:
+        """The GUI has handled the last waveforms. Callable from any thread."""
+        self._consumed.set()
 
     @property
     def state(self) -> ConnectionState:
@@ -178,6 +188,9 @@ class AcquisitionWorker(QObject):
     def _cycle(self) -> None:
         if self._state is not ConnectionState.CONNECTED or self._driver is None:
             return
+        if not self._consumed.is_set():
+            self._timer.start(BUSY_GUI_INTERVAL_MS)
+            return
         cycle_start = time.monotonic()
         try:
             transferred = self._poll()
@@ -229,6 +242,7 @@ class AcquisitionWorker(QObject):
             acq_state = AcqState.ACQUIRING
         self.status_updated.emit(replace(status, acq_state=acq_state))
         if waveforms:
+            self._consumed.clear()
             self.waveforms_updated.emit(waveforms)
         self.rate_updated.emit(self._rate(now))
         return bool(waveforms)

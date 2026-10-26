@@ -232,14 +232,20 @@ def test_each_acquisition_measured_exactly_once(bench, qtbot):
     assert all(is_allowed(command) for command in scope.sent)  # FR-020
 
 
-def test_pause_stops_statistics(bench, qtbot):
+def test_pause_stops_statistics_histogram_and_persistence(bench, qtbot):
     window, scope, _ = measured_bench(bench, qtbot)
+    window.side_panel.persistence_combo.setCurrentText("Infinite")
+    plot = window.scope_plot
+    qtbot.waitUntil(lambda: plot.persistence.count >= 2, timeout=5000)
     window.side_panel.pause_button.click()
     frozen = sizes(window)
+    layers, histogram = plot.persistence.count, window.histogram_panel.stats_label.text()
     seen = scope.acquisitions
     qtbot.waitUntil(lambda: scope.acquisitions >= seen + 5, timeout=5000)
     qtbot.wait(50)
     assert sizes(window) == frozen  # FR-023
+    assert plot.persistence.count == layers
+    assert window.histogram_panel.stats_label.text() == histogram
     window.side_panel.pause_button.click()
     qtbot.waitUntil(lambda: sizes(window)[0] > frozen[0], timeout=5000)
 
@@ -306,6 +312,9 @@ def test_bench_launcher_builds_an_isolated_window(qtbot, monkeypatch, tmp_path):
     try:
         assert window.windowTitle() == "Scope GUI — SYNTHETIC test bench"
         assert (scope.scene.points, scope.scene.mean_pe, scope.rate_hz) == (2000, 7.0, 200.0)
+        default = Scene().channels["C2"].volts_per_div  # --mean-pe 7: C2/C3 rescaled, no clipping
+        assert scope.scene.channels["C2"].volts_per_div > default
+        assert scope.scene.channels["C3"].volts_per_div == scope.scene.channels["C2"].volts_per_div
         assert window.measurements_panel.specs == bench.DEMO_MEASUREMENTS  # first start
         assert len(bench.DEMO_MEASUREMENTS) == 7
         window.show()

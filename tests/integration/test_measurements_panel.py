@@ -386,3 +386,24 @@ def test_export_result_in_status_bar(window, qtbot, tmp_path):
     panel.process(acquisition())
     export(panel, qtbot, tmp_path / "one.csv")
     assert "Exported 1 acquisition to" in window.statusBar().currentMessage()
+
+
+# --- histogram dock (US3) -------------------------------------------------------------------------
+
+
+def test_histogram_dock_follows_the_selected_measurement(window, qtbot):
+    from test_scope_plot import make_waveform
+
+    window.show()
+    qtbot.waitExposed(window)
+    assert window.histogram_dock.widget() is window.histogram_panel
+    assert "Histogram" in [a.text() for a in window.view_menu.actions()]
+    panel, histogram = window.measurements_panel, window.histogram_panel
+    panel.add(MAX_C1)
+    panel.add(TIME_C2)
+    for _ in range(5):
+        panel.process({"C1": make_waveform("C1")})
+    assert histogram._specs == [MAX_C1, TIME_C2] and histogram._selected == 1
+    panel.table.selectRow(0)
+    assert histogram._selected == 0
+    assert histogram.stats_label.text().startswith("N 5 · outside 0")

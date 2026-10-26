@@ -6,13 +6,14 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QLabel, QMainWindow, QMessageBox, QSplitter
+from PySide6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMessageBox, QSplitter
 
 from ..driver import ScopeDriver
 from ..models import ConnectionState, InstrumentIdentity, ScopeStatus, Waveform
 from ..settings import log_dir, save_last_address
 from ..worker import AcquisitionWorker
 from .connection_bar import ConnectionBar
+from .measurements_panel import MeasurementsPanel
 from .scope_plot import ScopePlot
 from .side_panel import SidePanel
 
@@ -41,13 +42,13 @@ class MainWindow(QMainWindow):
     def __init__(self, address: str = "", driver_factory=ScopeDriver):
         super().__init__()
         self.setWindowTitle("Scope GUI")
-        self.resize(1200, 700)
+        self.resize(1400, 900)
         self._pending_address = ""
         self._state = ConnectionState.DISCONNECTED
         self.view = LiveViewState()
+        self._last_settings = None  # channel and acquisition settings of the last status
 
         self.connection_bar = ConnectionBar(address)
-        self._build_menu()
         toolbar = self.addToolBar("Connection")
         toolbar.setMovable(False)
         toolbar.addWidget(self.connection_bar)
@@ -60,6 +61,11 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(0, 1)
         splitter.setCollapsible(0, False)
         self.setCentralWidget(splitter)
+
+        # Analysis docks (specs/002-waveform-analysis/contracts/ui.md).
+        self.measurements_panel = MeasurementsPanel()
+        self.measurements_dock = self._add_dock("Measurements", self.measurements_panel)
+        self._build_menu()
 
         self.rate_label = QLabel()
         self.statusBar().addPermanentWidget(self.rate_label)
@@ -89,7 +95,17 @@ class MainWindow(QMainWindow):
 
         self.worker_thread.start()
 
+    def _add_dock(self, title: str, widget) -> QDockWidget:
+        dock = QDockWidget(title, self)
+        dock.setObjectName(title)
+        dock.setWidget(widget)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
+        return dock
+
     def _build_menu(self) -> None:
+        view_menu = self.menuBar().addMenu("&View")
+        view_menu.addAction(self.measurements_dock.toggleViewAction())
+        self.view_menu = view_menu
         help_menu = self.menuBar().addMenu("&Help")
         help_menu.addAction("Open log folder", self.open_log_folder)
 
@@ -139,6 +155,11 @@ class MainWindow(QMainWindow):
 
     def _on_status(self, status: ScopeStatus) -> None:
         self.side_panel.set_status(status)
+        # FR-022: statistics are kept, but warn that they mix settings (research R14).
+        current = (status.channels, status.acquisition)
+        if self._last_settings is not None and current != self._last_settings:
+            self.measurements_panel.set_settings_changed()
+        self._last_settings = current
         if not self.view.paused:
             self.scope_plot.set_status(status)
 
@@ -146,6 +167,8 @@ class MainWindow(QMainWindow):
         if self.view.paused:
             return
         self.scope_plot.set_waveforms(waveforms)
+        # Every received channel is measured, also those hidden on the PC (FR-008).
+        self.measurements_panel.process(waveforms)
         self.view.last_update = datetime.now()
         self._update_rate_label()
 

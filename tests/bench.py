@@ -22,11 +22,23 @@ from synthetic_scope import Scene, SyntheticScope, synthetic_factory
 from scope_gui import driver as driver_module
 from scope_gui import settings
 from scope_gui.__main__ import setup_logging
+from scope_gui.analysis import Edge, Kind, Level, MeasurementSpec
 from scope_gui.driver import ScopeDriver
 from scope_gui.ui.main_window import MainWindow
 
 TITLE = "Scope GUI — SYNTHETIC test bench"
 ADDRESS = "synthetic"
+
+# Added on first start (contracts/synthetic-bench.md).
+DEMO_MEASUREMENTS = [
+    MeasurementSpec(Kind.DELTA_T, "C2", Level(0.2, True), "C3", Level(0.2, True)),  # timing
+    MeasurementSpec(Kind.DELTA_T, "C2", Level(0.030), "C4", Level(-0.4, edge=Edge.FALLING)),
+    MeasurementSpec(Kind.DELTA_T, "C1", Level(1.25), "C2", Level(0.030)),  # shows time walk
+    MeasurementSpec(Kind.AMPLITUDE, "C2"),  # photoelectron spectrum
+    MeasurementSpec(Kind.AREA, "C2"),
+    MeasurementSpec(Kind.FREQUENCY, "C1"),
+    MeasurementSpec(Kind.RISE_TIME, "C2"),
+]
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -63,6 +75,8 @@ def use_bench_settings(path: Path) -> None:
 def build_window(args: argparse.Namespace) -> tuple[MainWindow, SyntheticScope]:
     """The bench window (not shown) and its synthetic scope. Needs a QApplication."""
     use_bench_settings(bench_settings_path())
+    if not settings.load_measurements():
+        settings.save_measurements(DEMO_MEASUREMENTS)
     driver_module.tcp_precheck = lambda host, timeout=3.0: None  # nothing to reach
     scene = Scene(points=args.points, mean_pe=args.mean_pe)
     scope = SyntheticScope(scene, rate_hz=args.rate, seed=args.seed)

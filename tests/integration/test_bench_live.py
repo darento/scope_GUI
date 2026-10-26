@@ -10,6 +10,7 @@ from pyvisa.errors import VisaIOError
 from synthetic_scope import ChannelSetup, Scene, SyntheticScope, synthetic_factory
 
 from scope_gui import driver as driver_module
+from scope_gui.analysis import Kind, Level, MeasurementSpec
 from scope_gui.driver import ScopeDriver, is_allowed
 from scope_gui.models import CHANNELS, ConnectionState
 from scope_gui.ui.main_window import MainWindow
@@ -190,6 +191,95 @@ def test_changing_the_scene_changes_the_next_status_read():
     assert before.channel("C3") == after.channel("C3")
 
 
+# --- measurements (US2) --------------------------------------------------------------------------
+AMPLITUDE_C2 = MeasurementSpec(Kind.AMPLITUDE, "C2")
+FREQUENCY_C1 = MeasurementSpec(Kind.FREQUENCY, "C1")
+TIME_C1 = MeasurementSpec(Kind.TIME_AT_LEVEL, "C1", Level(1.25))
+
+
+def sizes(window) -> list[int]:
+    panel = window.measurements_panel
+    return [s.size for s in panel.stats] + [panel.trigger_log.size]
+
+
+def measured_bench(bench, qtbot, **kwargs):
+    """A connected bench measuring Amplitude C2 and Frequency C1, counting acquisitions."""
+    window, scope = bench(connect=False, **kwargs)
+    window.measurements_panel.add(AMPLITUDE_C2)
+    window.measurements_panel.add(FREQUENCY_C1)
+    received = []
+    window.worker.waveforms_updated.connect(lambda waves: received.append(len(waves)))
+    window.connection_bar.button.click()
+    qtbot.waitUntil(lambda: window.measurements_panel.trigger_log.size >= 5, timeout=5000)
+    return window, scope, received
+
+
+def disconnect(window, qtbot):
+    window.connection_bar.button.click()
+    qtbot.waitUntil(lambda: window._state is ConnectionState.DISCONNECTED, timeout=5000)
+
+
+def test_each_acquisition_measured_exactly_once(bench, qtbot):
+    window, scope, received = measured_bench(bench, qtbot)
+    disconnect(window, qtbot)
+    n = len(received)
+    assert n >= 5
+    assert sizes(window) == [n, n, n]
+    panel = window.measurements_panel
+    log = panel.trigger_log.history()
+    assert np.all(np.diff(log) > 0)  # a new trigger time per processed acquisition
+    assert panel.stats[1].summary().mean == pytest.approx(10e6, rel=1e-3)
+    assert all(is_allowed(command) for command in scope.sent)  # FR-020
+
+
+def test_pause_stops_statistics(bench, qtbot):
+    window, scope, _ = measured_bench(bench, qtbot)
+    window.side_panel.pause_button.click()
+    frozen = sizes(window)
+    seen = scope.acquisitions
+    qtbot.waitUntil(lambda: scope.acquisitions >= seen + 5, timeout=5000)
+    qtbot.wait(50)
+    assert sizes(window) == frozen  # FR-023
+    window.side_panel.pause_button.click()
+    qtbot.waitUntil(lambda: sizes(window)[0] > frozen[0], timeout=5000)
+
+
+def test_hidden_channel_still_measured(bench, qtbot):
+    window, scope, _ = measured_bench(bench, qtbot)
+    window.side_panel.checkboxes["C2"].setChecked(False)
+    assert not window.scope_plot.is_curve_visible("C2")
+    before = window.measurements_panel.stats[0].summary().count
+    qtbot.waitUntil(
+        lambda: window.measurements_panel.stats[0].summary().count >= before + 5, timeout=5000
+    )  # FR-008
+
+
+def test_settings_change_keeps_statistics_and_warns(bench, qtbot):
+    window, scope, _ = measured_bench(bench, qtbot)
+    panel = window.measurements_panel
+    assert not panel.settings_note_visible
+    held = panel.trigger_log.size
+    scope.scene.channels["C2"].volts_per_div = 0.050
+    qtbot.waitUntil(lambda: panel.settings_note_visible, timeout=5000)  # FR-022
+    assert panel.trigger_log.size >= held  # kept, still accumulating
+    panel.clear_button.click()
+    assert not panel.settings_note_visible
+
+
+def test_statistics_kept_after_disconnect_and_lost_connection(bench, qtbot):
+    window, scope, _ = measured_bench(bench, qtbot)
+    disconnect(window, qtbot)
+    kept = sizes(window)
+    assert window.measurements_panel.cell_text(0, "N") != "0"
+    window.connection_bar.button.click()  # reconnect, then lose the connection
+    qtbot.waitUntil(lambda: sizes(window)[2] > kept[2], timeout=5000)
+    scope.reset = True
+    qtbot.waitUntil(lambda: window._state is ConnectionState.LOST, timeout=10000)
+    lost = sizes(window)
+    qtbot.wait(100)
+    assert sizes(window) == lost and lost[2] > kept[2]
+
+
 # --- launcher -----------------------------------------------------------------------------------
 def test_bench_launcher_builds_an_isolated_window(qtbot, monkeypatch, tmp_path):
     import bench  # tests/bench.py
@@ -203,6 +293,8 @@ def test_bench_launcher_builds_an_isolated_window(qtbot, monkeypatch, tmp_path):
     try:
         assert window.windowTitle() == "Scope GUI — SYNTHETIC test bench"
         assert (scope.scene.points, scope.scene.mean_pe, scope.rate_hz) == (2000, 7.0, 200.0)
+        assert window.measurements_panel.specs == bench.DEMO_MEASUREMENTS  # first start
+        assert len(bench.DEMO_MEASUREMENTS) == 7
         window.show()
         window.connection_bar.button.click()
         qtbot.waitUntil(lambda: window._state is ConnectionState.CONNECTED, timeout=5000)
@@ -211,3 +303,18 @@ def test_bench_launcher_builds_an_isolated_window(qtbot, monkeypatch, tmp_path):
         assert "synthetic" in (tmp_path / "scope_gui" / "bench.ini").read_text()
     finally:
         window.close()
+
+
+def test_demo_set_only_on_first_start(qtbot, monkeypatch, tmp_path):
+    import bench
+
+    monkeypatch.setattr(driver_module, "tcp_precheck", driver_module.tcp_precheck)
+    args = bench.parse_args(["--points", "2000"])
+    first, _ = bench.build_window(args)
+    qtbot.addWidget(first)
+    first.measurements_panel.remove(0)  # the user's choice is kept on the next start
+    second, _ = bench.build_window(args)
+    qtbot.addWidget(second)
+    assert second.measurements_panel.specs == bench.DEMO_MEASUREMENTS[1:]
+    first.close()
+    second.close()

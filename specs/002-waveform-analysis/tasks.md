@@ -150,7 +150,7 @@ within 10 % of the combined jitter, and the frequency reads 10 MHz (quickstart B
 
 ### Tests for User Story 2
 
-- [ ] T009 [P] [US2] Add the measurement guarantees 1–10 of contracts/analysis.md to
+- [X] T009 [P] [US2] Add the measurement guarantees 1–10 of contracts/analysis.md to
   `tests/unit/test_analysis.py`, using analytic `Waveform`s: (1) linear ramp crossing a volt
   level between samples → crossing time within 1 % of `dt`, rising and falling (SC-003);
   (2) two identical edges shifted by τ (not a multiple of `dt`) → Δt = τ ± 1 % `dt`;
@@ -168,11 +168,11 @@ within 10 % of the combined jitter, and the frequency reads 10 MHz (quickstart B
   (9) missing source channel → NaN, other measurements unaffected; (10) `Statistics` ring wraps
   at capacity, `history()` oldest first, NaN counted as missed, `summary()` (ddof = 1) matches
   numpy on the finite values, empty summary → NaN fields and count 0
-- [ ] T010 [P] [US2] Add to `tests/unit/test_settings.py`: `save_measurements` /
+- [X] T010 [P] [US2] Add to `tests/unit/test_settings.py`: `save_measurements` /
   `load_measurements` round-trip a list of `MeasurementSpec`s under the key
   `analysis/measurements`; default is an empty list; an invalid or unknown entry in the stored
   JSON is skipped (and logged) while the valid ones load (R12)
-- [ ] T011 [P] [US2] Write `tests/integration/test_measurements_panel.py` (pytest-qt, analytic
+- [X] T011 [P] [US2] Write `tests/integration/test_measurements_panel.py` (pytest-qt, analytic
   `Waveform`s fed to the panel): Add via the dialog appends a row named after the spec;
   `process(waveforms)` adds exactly one value per measurement per call (FR-008); columns
   Measurement, Last, Mean, σ, Min, Max, N, Missed with SI units, 4 significant digits, % with
@@ -181,7 +181,7 @@ within 10 % of the combined jitter, and the frequency reads 10 MHz (quickstart B
   Remove drops the row and its statistics; the list is saved and restored by a new panel
   (FR-011); dialog: level fields hidden for kinds without levels, second source/level only for
   Δt, "%" shows Leading/Trailing instead of Rising/Falling, OK disabled until valid
-- [ ] T012 [P] [US2] Extend `tests/integration/test_bench_live.py`: with two measurements on the
+- [X] T012 [P] [US2] Extend `tests/integration/test_bench_live.py`: with two measurements on the
   live bench, after N acquisitions each measurement has exactly N entries and the trigger-time
   log has N entries; while paused N does not grow (FR-023) and resumes after; hidden channels
   are still measured (FR-008); changing `scope.scene` V/div mid-run shows "Scope settings
@@ -196,7 +196,7 @@ within 10 % of the combined jitter, and the frequency reads 10 MHz (quickstart B
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Implement measurements in `src/scope_gui/analysis.py` per data-model.md "Kind"
+- [X] T014 [US2] Implement measurements in `src/scope_gui/analysis.py` per data-model.md "Kind"
   and research R1–R4: `Trace` (whole-record base and noise rms by MAD × 1.4826, polarity
   +1/−1/0 by mid-level split with `PULSE_FRACTION = 0.2`, all computed on at most 100,000
   evenly spaced samples of the record (R1); gated top = peak over every gated sample for
@@ -211,16 +211,16 @@ within 10 % of the combined jitter, and the frequency reads 10 MHz (quickstart B
   (float64 ring of `HISTORY = 100_000`, `add`, `clear`, `size`, `history`, `values`, `last`,
   `summary`) and frozen `Summary(last, mean, std, minimum, maximum, count, missed)`; make T009
   and T013 pass
-- [ ] T015 [P] [US2] Add `load_measurements() -> list[MeasurementSpec]` and
+- [X] T015 [P] [US2] Add `load_measurements() -> list[MeasurementSpec]` and
   `save_measurements(specs)` to `src/scope_gui/settings.py`: JSON list of `to_dict()` under
   `analysis/measurements`, invalid entries skipped with a log warning; make T010 pass
-- [ ] T016 [P] [US2] Create `src/scope_gui/ui/measurement_dialog.py` per contracts/ui.md
+- [X] T016 [P] [US2] Create `src/scope_gui/ui/measurement_dialog.py` per contracts/ui.md
   "Add… / Edit…": type combo (all `Kind`s, with a tooltip giving each definition from
   data-model.md), source combo C1–C4, level value + unit (V or %) + edge (Rising/Falling, shown
   as Leading/Trailing for %) shown only when `kind.levels ≥ 1`, second source + level only for
   `DELTA_T`; `%` stored as fraction 0–1; OK disabled until valid; returns a `MeasurementSpec`
   or `None`
-- [ ] T017 [US2] Create `src/scope_gui/ui/measurements_panel.py`: buttons Add…, Edit…
+- [X] T017 [US2] Create `src/scope_gui/ui/measurements_panel.py`: buttons Add…, Edit…
   (also row double-click), Remove, Clear (Export… added in US5); table per contracts/ui.md;
   one `Statistics` per measurement and the `AcquisitionLog` ring of trigger times (first
   channel's `Waveform.trigger_time`) filled in step; `process(waveforms)` measures once and
@@ -229,14 +229,14 @@ within 10 % of the combined jitter, and the frequency reads 10 MHz (quickstart B
   while statistics hold values) cleared by Clear; persist the list with
   `settings.save_measurements` on every add/edit/remove and load it at construction; make T011
   pass
-- [ ] T018 [US2] Wire analysis in `src/scope_gui/ui/main_window.py`: Measurements dock
+- [X] T018 [US2] Wire analysis in `src/scope_gui/ui/main_window.py`: Measurements dock
   (bottom, movable/floatable/closable) and a View menu entry to re-open it; default size
   1400 × 900; in `_on_waveforms` call `measurements_panel.process(waveforms)` with every
   received channel (also hidden ones) only when not paused (FR-008, FR-023); in `_on_status`
   compare channel settings, timebase, trigger delay and trigger mode with the previous
   `ScopeStatus` (ignore `acq_state`/`read_at`) and call `set_settings_changed()` on a change
   (R14); keep statistics on disconnect/connection lost; make T012 pass
-- [ ] T019 [US2] In `tests/bench.py` add the demo measurement set of
+- [X] T019 [US2] In `tests/bench.py` add the demo measurement set of
   contracts/synthetic-bench.md on first start (when `load_measurements()` is empty): Δt C2
   lead 20 % → C3 lead 20 %; Δt C2 ↑ 30 mV → C4 ↓ −400 mV; Δt C1 ↑ 1.25 V → C2 ↑ 30 mV;
   Amplitude C2; Area C2; Frequency C1; Rise time C2

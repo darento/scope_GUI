@@ -379,3 +379,25 @@ def test_amplitude_histogram_of_a_clipped_channel_peaks_at_the_clipping_level():
     assert highest == pytest.approx(clip, abs=1.5e-3)
     assert amplitude.max() <= clip + 3 * gain  # nothing above the screen edge
     assert (amplitude > clip - 2e-3).mean() > 0.4  # most pulses (2+ pe) are clipped
+
+
+def binned_medians(x: np.ndarray, y: np.ndarray, edges) -> np.ndarray:
+    ok = np.isfinite(x) & np.isfinite(y)
+    pairs = zip(edges[:-1], edges[1:], strict=True)
+    return np.array([np.median(y[ok & (x >= a) & (x < b)]) for a, b in pairs])
+
+
+AMPLITUDE_BINS = (0.03, 0.05, 0.07, 0.09, 0.12, 0.2)  # volts: ~2 to 10 photoelectrons
+
+
+def test_time_walk_of_a_fixed_threshold(default_population):
+    """Quickstart B5: with a fixed volt level, larger pulses cross it earlier (time walk), as
+    the correlation view shows; the constant-fraction Δt does not walk."""
+    fixed = MeasurementSpec(Kind.DELTA_T, "C1", Level(1.25), "C2", Level(0.03))
+    (dt, amplitude), _ = measure_population(make_scene(points=5000), [fixed, AMPLITUDE_C2], 400, 41)
+    walk = binned_medians(amplitude, dt, AMPLITUDE_BINS)
+    assert (np.diff(walk) < 0).all()  # earlier for every larger amplitude bin
+    assert walk[0] - walk[-1] > 0.5e-9
+    (cf, cf_amplitude), _ = default_population
+    flat = binned_medians(cf_amplitude, cf, AMPLITUDE_BINS)
+    assert np.ptp(flat) < (walk[0] - walk[-1]) / 5

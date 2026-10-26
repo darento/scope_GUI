@@ -46,3 +46,36 @@ Bench, 10k points, window maximised, Infinite persistence, 6 s (20 ms GUI timer)
 |---|---|---|
 | 20 /s | 22 / 69 ms | 19.3 /s |
 | 200 /s | 24 / 79 ms | 13.5 /s |
+
+## T041 Tests
+
+- `uv run pytest`: 435 passed, 3 deselected (hardware), no scope needed. Ruff check and format
+  clean.
+- `uv run pytest -m hardware`: **not run**. The scope at 192.168.0.9 was unreachable (3 skipped);
+  includes `test_analysis_session_read_only` (T037, SC-007).
+
+## T042 Quickstart
+
+Bench (B): automated equivalents in `tests/integration/` and two screenshots of the bench window
+(1400 × 900, persistence 100, 20 acquisitions/s held).
+
+| # | Status | Evidence |
+|---|---|---|
+| B1 | ✓ | Screenshot: clock, both SiPM polarities with photoelectron steps, NIM; SYNTHETIC title; `test_bench_live` |
+| B2 | ✓ (automated) | `test_bench_accuracy` (SC-002 fit within 10 % / 20 ps) |
+| B3 | ✓ (automated) | `test_measurements_panel` gate tests, `test_scope_plot_tools::test_gate_between_cursors` |
+| B4 | ✓ (automated) | `test_bench_accuracy` (SC-004 peaks spaced within 5 %) |
+| B5 | ✓ (automated) | `test_histogram_panel` correlation tests; `test_bench_accuracy::test_time_walk_of_a_fixed_threshold` (30 mV level: median Δt falls ~0.9 ns from 2 to 10 photoelectrons; constant fraction flat) |
+| B6 | ✓ (automated) | `test_scope_plot_tools` level drag, `test_measurements_panel` update_level |
+| B7 | ✓ (automated) | `test_scope_plot_tools` wheel zoom kept, double-click reset |
+| B8 | ✓ (automated) | `test_scope_plot_tools` cursor readout |
+| B9 | ✓ | Screenshot: density behind traces, photoelectron bands; restarts tested |
+| B10 | ✓ (automated) | `test_bench_live::test_pause_stops_statistics_histogram_and_persistence` |
+| B11 | ✓ (automated, file only) | `test_measurements_panel` export tests; opening in Excel not checked |
+| B12 | ✓ (automated) | `test_bench_live::test_demo_set_only_on_first_start`, `test_settings` |
+
+Found during this pass and fixed: the bench window stopped responding with persistence on (see
+above); the Gaussian fit locked onto a single bin of sparse histograms (fit σ 5.6 ps for data
+σ 74 ps; now started from a smoothed peak and refined with truncated moments).
+
+Real scope (R1–R4) and SC-001 timing: **pending**, they need the scope and a person.

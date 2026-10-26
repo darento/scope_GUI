@@ -47,6 +47,14 @@ From `/speckit-analyze` (2026-10-26):
 - FR-021 made measurable (0.2 s, 10 %); at 2.5M points the reference levels use ≤ 100k samples
   and persistence is rasterised per pixel column to stay within it (research R1, R7).
 
+From implementation (2026-10-26, see [checklists/validation.md](checklists/validation.md)):
+
+- FR-021 is met per event-loop turn: drawing and analysis of one acquisition run in two turns
+  (131 ms and 100 ms at 2.5M × 4), with input handled in between.
+- When the window cannot keep up, the update rate drops instead of acquisitions queueing up:
+  the next acquisition is sent only after the previous one was drawn and measured, so every
+  acquisition shown is still measured exactly once (FR-008).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Synthetic signal bench for development and demos (Priority: P1)

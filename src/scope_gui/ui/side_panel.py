@@ -1,10 +1,11 @@
-"""Right-hand panel: channel rows, acquisition summary and Pause button (contracts/ui.md)."""
+"""Right-hand panel: channels, acquisition summary, display tools and Pause (contracts/ui.md)."""
 
 import math
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -17,6 +18,9 @@ from ..models import CHANNEL_COLORS, CHANNELS, ScopeStatus
 
 PANEL_WIDTH = 230
 NO_VALUE = "—"
+
+# Persistence choices: fade length in acquisitions; None = infinite, 0 = off (FR-018).
+PERSISTENCE_CHOICES = {"Off": 0, "10": 10, "100": 100, "1000": 1000, "Infinite": None}
 
 _SI_PREFIXES = ("p", "n", "µ", "m", "", "k", "M", "G")
 _UNITY_INDEX = 4
@@ -38,6 +42,9 @@ def format_si(value: float, unit: str) -> str:
 class SidePanel(QWidget):
     hidden_changed = Signal(object)  # set[str] of channels the user unchecked
     paused_changed = Signal(bool)
+    cursors_toggled = Signal(bool)
+    persistence_changed = Signal(object)  # fade length, None = infinite, 0 = off
+    reset_view_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -76,6 +83,26 @@ class SidePanel(QWidget):
         acq_layout.addWidget(self.trigger_label)
         acq_layout.addWidget(self.state_label)
 
+        self.cursors_checkbox = QCheckBox("Cursors")
+        self.cursors_checkbox.toggled.connect(self.cursors_toggled)
+        self.persistence_combo = QComboBox()
+        self.persistence_combo.addItems(list(PERSISTENCE_CHOICES))
+        self.persistence_combo.setToolTip("Fade over this many acquisitions")
+        self.persistence_combo.currentTextChanged.connect(
+            lambda text: self.persistence_changed.emit(PERSISTENCE_CHOICES[text])
+        )
+        self.reset_view_button = QPushButton("Reset view")
+        self.reset_view_button.setToolTip("Back to the scope's screen (or double-click the plot)")
+        self.reset_view_button.clicked.connect(self.reset_view_requested)
+        display_box = QGroupBox("Display")
+        display_layout = QVBoxLayout(display_box)
+        display_layout.addWidget(self.cursors_checkbox)
+        persistence_row = QHBoxLayout()
+        persistence_row.addWidget(QLabel("Persistence"))
+        persistence_row.addWidget(self.persistence_combo, 1)
+        display_layout.addLayout(persistence_row)
+        display_layout.addWidget(self.reset_view_button)
+
         self.pause_button = QPushButton("Pause")
         self.pause_button.setCheckable(True)
         self.pause_button.toggled.connect(self._on_pause_toggled)
@@ -84,6 +111,7 @@ class SidePanel(QWidget):
         layout.setContentsMargins(6, 4, 6, 4)
         layout.addWidget(channels_box)
         layout.addWidget(acq_box)
+        layout.addWidget(display_box)
         pause_row = QHBoxLayout()
         pause_row.addWidget(self.pause_button)
         layout.addLayout(pause_row)

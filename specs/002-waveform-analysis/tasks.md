@@ -330,7 +330,7 @@ double-click resets; cursors 100 ns apart read Δt 100 ns and 1/Δt 10 MHz (quic
   level on release only (FR-017); persistence on → image item behind the curves, restarted by
   zoom, reset and a V/div change, removed by Off (FR-018); paused → no persistence change;
   `clear()` keeps the zoom and cursors and empties the persistence
-- [ ] T028 [P] [US4] Add to `tests/integration/test_measurements_panel.py`: Gate combo "Whole
+- [X] T028 [P] [US4] Add to `tests/integration/test_measurements_panel.py`: Gate combo "Whole
   record" / "Between cursors"; selecting "Between cursors" requests cursors on and `process`
   passes the gate to `measure_all`; dragging a level line updates that measurement's spec (name
   shows the new level), clears only its statistics and saves the list
@@ -356,10 +356,10 @@ double-click resets; cursors 100 ns apart read Δt 100 ns and 1/Δt 10 MHz (quic
   change; signals for gate/cursor changes; `clear()` (Disconnect / connection lost) keeps zoom
   and cursors and clears persistence with the traces (contracts/ui.md Guarantees); make T027
   pass
-- [ ] T031 [P] [US4] Add the Display group to `src/scope_gui/ui/side_panel.py`: Cursors check
+- [X] T031 [P] [US4] Add the Display group to `src/scope_gui/ui/side_panel.py`: Cursors check
   box, Persistence combo (Off / 10 / 100 / 1000 / Infinite), Reset view button, with signals;
   `clear()` keeps the Display choices
-- [ ] T032 [US4] Add the Gate combo (Whole record / Between cursors) to
+- [X] T032 [US4] Add the Gate combo (Whole record / Between cursors) to
   `src/scope_gui/ui/measurements_panel.py` and `update_level(index, volts)` that replaces the
   selected spec's level, clears only its statistics and saves the list; make T028 pass
 - [ ] T033 [US4] Wire in `src/scope_gui/ui/main_window.py`: Display group → scope plot
@@ -380,7 +380,7 @@ three names, empty cells where missed (quickstart B11)
 
 ### Tests for User Story 5
 
-- [ ] T034 [P] [US5] Add export tests to `tests/integration/test_measurements_panel.py`
+- [X] T034 [P] [US5] Add export tests to `tests/integration/test_measurements_panel.py`
   (`QFileDialog` monkeypatched to return a `tmp_path` file): 500 acquisitions × 3 measurements
   → header `trigger_time_s` then `name [unit]` per measurement, 500 rows, empty cell for missed,
   file starts with the UTF-8 BOM; a measurement added after 200 acquisitions has an empty
@@ -392,11 +392,11 @@ three names, empty cells where missed (quickstart B11)
 
 ### Implementation for User Story 5
 
-- [ ] T035 [US5] Implement export in `src/scope_gui/ui/measurements_panel.py` per R10–R11:
+- [X] T035 [US5] Implement export in `src/scope_gui/ui/measurements_panel.py` per R10–R11:
   Export… button, `QFileDialog.getSaveFileName` (`.csv`); copy histories and the trigger-time
   log on the GUI thread; write with `csv` (UTF-8 with BOM, `newline=""`) in a `QRunnable` on
   `QThreadPool.globalInstance()`; report done/failed through a queued signal; make T034 pass
-- [ ] T036 [US5] Wire the export result signal to the status bar in
+- [X] T036 [US5] Wire the export result signal to the status bar in
   `src/scope_gui/ui/main_window.py` ("Exported N acquisitions to <path>" / "Export failed:
   <reason>"); statistics stay exportable after Disconnect and connection lost
 

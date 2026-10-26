@@ -1,10 +1,15 @@
 """Measurements dock: definitions, running statistics and export (contracts/ui.md)."""
 
+import csv
+import dataclasses
 import math
 
-from PySide6.QtCore import Qt, Signal
+import numpy as np
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -16,10 +21,11 @@ from PySide6.QtWidgets import (
 )
 
 from .. import settings
-from ..analysis import MeasurementSpec, Statistics, Summary, measure_all, si_format
+from ..analysis import Level, MeasurementSpec, Statistics, Summary, measure_all, si_format
 from ..models import CHANNELS, Waveform
 from . import measurement_dialog
 
+GATE_CHOICES = ("Whole record", "Between cursors")
 COLUMNS = ("Measurement", "Last", "Mean", "σ", "Min", "Max", "N", "Missed")
 SETTINGS_NOTE = "⚠ Scope settings changed during this run"
 _RIGHT = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -36,9 +42,43 @@ def format_value(value: float, unit: str) -> str:
     return si_format(value, unit)
 
 
+class _ExportSignals(QObject):
+    finished = Signal(bool, str)  # ok, message for the status bar
+
+
+class _CsvExport(QRunnable):
+    """Writes the snapshot of the histories in a pool thread (Constitution II, research R11)."""
+
+    def __init__(self, path: str, header: list[str], columns: list[np.ndarray]):
+        super().__init__()
+        self.path, self.header, self.columns = path, header, columns
+        self.signals = _ExportSignals()
+
+    def run(self) -> None:
+        try:
+            # UTF-8 with BOM so spreadsheet programs show Δ and µ (research R11).
+            with open(self.path, "w", encoding="utf-8-sig", newline="") as file:
+                writer = csv.writer(file)
+                writer.writerow(self.header)
+                text = [[_csv_value(v) for v in column] for column in self.columns]
+                writer.writerows(zip(*text, strict=True))
+        except OSError as exc:
+            self.signals.finished.emit(False, f"Export failed: {exc}")
+            return
+        rows = self.columns[0].size if self.columns else 0
+        plural = "" if rows == 1 else "s"
+        self.signals.finished.emit(True, f"Exported {rows} acquisition{plural} to {self.path}")
+
+
+def _csv_value(value: float) -> str:
+    return "" if math.isnan(value) else f"{value:.10g}"
+
+
 class MeasurementsPanel(QWidget):
     selection_changed = Signal()  # the selected measurement (or its definition) changed
     processed = Signal()  # statistics changed: an acquisition was added or they were cleared
+    gate_changed = Signal(bool)  # True: measure only between the cursors (FR-016)
+    export_finished = Signal(bool, str)  # ok, message for the status bar (FR-019)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -52,11 +92,30 @@ class MeasurementsPanel(QWidget):
         self.edit_button = QPushButton("Edit…")
         self.remove_button = QPushButton("Remove")
         self.clear_button = QPushButton("Clear")
+        self.export_button = QPushButton("Export…")
+        self.export_button.setToolTip("Save every kept value to a CSV file")
         buttons = QHBoxLayout()
-        for button in (self.add_button, self.edit_button, self.remove_button, self.clear_button):
+        for button in (
+            self.add_button,
+            self.edit_button,
+            self.remove_button,
+            self.clear_button,
+            self.export_button,
+        ):
             buttons.addWidget(button)
         self.buttons_layout = buttons
         buttons.addStretch(1)
+
+        self.gate_combo = QComboBox()
+        self.gate_combo.addItems(GATE_CHOICES)
+        self.gate_combo.setToolTip("Samples the measurements use")
+        self.gate_combo.currentIndexChanged.connect(
+            lambda index: self.gate_changed.emit(index == 1)
+        )
+        gate_row = QHBoxLayout()
+        gate_row.addWidget(QLabel("Gate"))
+        gate_row.addWidget(self.gate_combo)
+        gate_row.addStretch(1)
 
         self.settings_note = QLabel(SETTINGS_NOTE)
         self.settings_note.setStyleSheet("color: #f0a020;")
@@ -76,6 +135,7 @@ class MeasurementsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.addLayout(buttons)
+        layout.addLayout(gate_row)
         layout.addWidget(self.settings_note)
         layout.addWidget(self.table)
 
@@ -84,6 +144,8 @@ class MeasurementsPanel(QWidget):
         self.table.cellDoubleClicked.connect(lambda row, _column: self._on_edit())
         self.remove_button.clicked.connect(self._on_remove)
         self.clear_button.clicked.connect(self.clear_statistics)
+        self.export_button.clicked.connect(self._on_export)
+        self._exports: list[_CsvExport] = []  # keep running exports alive
         self.table.itemSelectionChanged.connect(self._on_selection)
 
         self._rebuild_table()
@@ -121,6 +183,23 @@ class MeasurementsPanel(QWidget):
         self._refresh_row(row)
         self.selection_changed.emit()
         self.processed.emit()
+
+    def update_level(self, index: int, volts: float) -> None:
+        """A level line of the selected measurement was dragged to ``volts`` (FR-017)."""
+        row = self.selected_row
+        if row is None:
+            return
+        spec = self.specs[row]
+        field = "level" if index == 0 else "level2"
+        level = getattr(spec, field)
+        self.replace(row, dataclasses.replace(spec, **{field: Level(volts, False, level.edge)}))
+
+    @property
+    def gate_between_cursors(self) -> bool:
+        return self.gate_combo.currentIndex() == 1
+
+    def set_gate_between_cursors(self, on: bool) -> None:
+        self.gate_combo.setCurrentIndex(1 if on else 0)
 
     def remove(self, row: int) -> None:
         del self.specs[row]
@@ -169,6 +248,46 @@ class MeasurementsPanel(QWidget):
 
     def summary(self, row: int) -> Summary:
         return self.stats[row].summary()
+
+    # --- export (FR-019) -------------------------------------------------------------------------
+    def ask_export_path(self) -> str:
+        """Save-file dialog (replaced in tests); empty when cancelled."""
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Export measurements", "measurements.csv", "CSV files (*.csv)"
+        )
+        return path
+
+    def export(self, path: str) -> None:
+        """Copy the histories here, write the file in the background.
+
+        One row per kept acquisition, the trigger time first; histories end at the same
+        acquisition, so a measurement added later has empty cells before it existed (R10).
+        """
+        times = self.trigger_log.history()
+        header = ["trigger_time_s"]
+        columns = [times]
+        for spec, stats in zip(self.specs, self.stats, strict=True):
+            unit = spec.kind.unit
+            header.append(f"{spec.name} [{unit}]" if unit else spec.name)
+            history = stats.history()
+            column = np.full(times.size, np.nan)
+            if history.size:
+                column[-history.size :] = history[-times.size :]
+            columns.append(column)
+        job = _CsvExport(path, header, columns)
+        job.signals.finished.connect(lambda ok, message: self._on_export_done(job, ok, message))
+        self._exports.append(job)
+        QThreadPool.globalInstance().start(job)
+
+    def _on_export(self) -> None:
+        path = self.ask_export_path()
+        if path:
+            self.export(path)
+
+    def _on_export_done(self, job: _CsvExport, ok: bool, message: str) -> None:
+        if job in self._exports:
+            self._exports.remove(job)
+        self.export_finished.emit(ok, message)
 
     # --- table ----------------------------------------------------------------------------------
     def _rebuild_table(self) -> None:

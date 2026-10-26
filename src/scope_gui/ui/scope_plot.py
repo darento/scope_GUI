@@ -1,10 +1,19 @@
-"""Plot mirroring the scope's screen: 10 x 8 divisions, scope trace colours (research R6, R7)."""
+"""Plot mirroring the scope's screen: 10 x 8 divisions, scope trace colours (research R6, R7).
+
+Analysis tools (spec 002, research R7-R9): box/wheel zoom and pan with a way back to the scope's
+screen, two time cursors with a readout, the measurement gate between them, draggable level lines
+of the selected measurement and a fading density persistence behind the traces.
+"""
+
+import math
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from ..analysis import Kind, MeasurementSpec
+from ..analysis import si_format as _si
 from ..models import (
     CHANNEL_COLORS,
     CHANNELS,
@@ -22,6 +31,8 @@ STALE_OPACITY = 0.4
 GRID_COLOR = "#3c3c3c"
 GRID_CENTRE_COLOR = "#6a6a6a"
 TRIGGER_COLOR = "#ff9a1f"
+CURSOR_COLOR = "#e0e0e0"
+GATE_BRUSH = (255, 255, 255, 28)
 OVERLAY_MARGIN = 8
 
 NO_CHANNELS_TEXT = "No channels enabled on the scope"
@@ -39,6 +50,8 @@ def _overlay(parent: QWidget, text: str, style: str) -> QLabel:
 
 
 class ScopePlot(QWidget):
+    level_dragged = Signal(int, float)  # level index (0 or 1) of the selected measurement, volts
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._status: ScopeStatus | None = None
@@ -46,12 +59,21 @@ class ScopePlot(QWidget):
         self._hidden: set[str] = set()
         self._stale = False
         self._grid_x: tuple[float, float, float] | None = None
+        self.zoomed = False  # the user owns the view range until Reset view (research R8)
+        self._gate_on = False
+        self._level_lines: list[tuple[pg.InfiniteLine, int, str]] = []
+        self._level_volts: dict[int, float] = {}
 
         self.plot_widget = pg.PlotWidget(background="k")
         self.plot: pg.PlotItem = self.plot_widget.getPlotItem()
         self.plot.setMenuEnabled(False)
         self.plot.hideButtons()
-        self.plot.setMouseEnabled(False, False)
+        # Left-drag: box zoom; wheel: zoom; middle-drag: pan (FR-014). No context menu: its
+        # options would fight with the scope mirror.
+        self.plot.setMouseEnabled(True, True)
+        self.plot.vb.setMouseMode(pg.ViewBox.RectMode)
+        self.plot.vb.sigRangeChangedManually.connect(self._on_manual_range)
+        self.plot_widget.scene().sigMouseClicked.connect(self._on_mouse_clicked)
         self.plot.setLabel("bottom", "Time", units="s")
         self.plot.setLabel("left", "div")
         self.plot.setXRange(-0.5, 0.5, padding=0)
@@ -88,6 +110,28 @@ class ScopePlot(QWidget):
         self.trigger_line.setZValue(-5)
         self.plot.addItem(self.trigger_line, ignoreBounds=True)
 
+        # Measurement gate: shaded, follows the cursors, not draggable itself (FR-016).
+        self.gate_region = pg.LinearRegionItem(movable=False, brush=pg.mkBrush(*GATE_BRUSH))
+        self.gate_region.setZValue(-6)
+        self.gate_region.setVisible(False)
+        self.plot.addItem(self.gate_region, ignoreBounds=True)
+
+        # Two time cursors (FR-015).
+        self.cursors: list[pg.InfiniteLine] = []
+        for label in ("1", "2"):
+            line = pg.InfiniteLine(
+                angle=90,
+                movable=True,
+                pen=pg.mkPen(CURSOR_COLOR, style=Qt.PenStyle.DashDotLine),
+                hoverPen=pg.mkPen(CURSOR_COLOR, width=2),
+                label=label,
+                labelOpts={"position": 0.03, "color": CURSOR_COLOR},
+            )
+            line.setVisible(False)
+            line.sigPositionChanged.connect(self._on_cursor_moved)
+            self.plot.addItem(line, ignoreBounds=True)
+            self.cursors.append(line)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.plot_widget)
@@ -111,6 +155,13 @@ class ScopePlot(QWidget):
             " background: rgba(0, 0, 0, 170); padding: 2px 6px;",
         )
         self._hover.setTextFormat(Qt.TextFormat.RichText)
+        self._cursor_readout = _overlay(
+            self.plot_widget,
+            "",
+            "color: #e0e0e0; font-family: Consolas, monospace; font-size: 9pt;"
+            " background: rgba(0, 0, 0, 170); padding: 2px 6px;",
+        )
+        self._cursor_readout.setTextFormat(Qt.TextFormat.RichText)
 
         self._proxy = pg.SignalProxy(
             self.plot_widget.scene().sigMouseMoved, rateLimit=30, slot=self._on_mouse_moved
@@ -138,6 +189,9 @@ class ScopePlot(QWidget):
 
         self._no_channels.setVisible(not status.enabled_channels)
         self._multigrid.setVisible(status.acquisition.grid_mode.upper() != "SINGLE")
+        self._place_level_lines()
+        if previous is not None and _scales(previous) != _scales(status):
+            self._restart_persistence()
         self._layout_overlays()
 
     def set_waveforms(self, waveforms: dict[str, Waveform]) -> None:
@@ -149,6 +203,8 @@ class ScopePlot(QWidget):
                 self._waveforms[name] = waveform
                 self._draw(name)
         self._refresh_visibility()
+        self._update_cursor_readout()
+        self._add_persistence()
 
     def set_hidden(self, hidden: set[str]) -> None:
         self._hidden = set(hidden)
@@ -163,8 +219,11 @@ class ScopePlot(QWidget):
         self._layout_overlays()
 
     def clear(self) -> None:
+        """Disconnected: traces and persistence go; zoom, cursors and gate stay (ui.md)."""
         self._status = None
         self._waveforms.clear()
+        self._restart_persistence()
+        self._update_cursor_readout()
         for curve in self.curves.values():
             curve.setData([], [])
             curve.setVisible(False)
@@ -180,6 +239,165 @@ class ScopePlot(QWidget):
             and name not in self._hidden
             and name in self._waveforms
         )
+
+    # -- zoom (FR-014, research R8) -----------------------------------------------------------
+
+    def reset_view(self) -> None:
+        """Back to the scope's screen; the view follows the scope again."""
+        self.zoomed = False
+        if self._status is not None:
+            self._update_range(self._status)
+        self._restart_persistence()
+
+    def _on_manual_range(self, *_args) -> None:
+        self.zoomed = True
+        self._restart_persistence()
+
+    def _on_mouse_clicked(self, event) -> None:
+        if event.double() and self.plot.vb.sceneBoundingRect().contains(event.scenePos()):
+            event.accept()
+            self.reset_view()
+
+    # -- cursors and gate (FR-015, FR-016, research R9) ----------------------------------------
+
+    @property
+    def cursors_visible(self) -> bool:
+        return self.cursors[0].isVisible()
+
+    def set_cursors_visible(self, visible: bool) -> None:
+        if visible and not self.cursors_visible:
+            (x_min, x_max), _ = self.plot.vb.viewRange()
+            for line, fraction in zip(self.cursors, (1 / 3, 2 / 3), strict=True):
+                line.setValue(x_min + fraction * (x_max - x_min))
+        for line in self.cursors:
+            line.setVisible(visible)
+        if not visible:
+            self.set_gate_enabled(False)
+        self._update_cursor_readout()
+
+    def cursor_positions(self) -> tuple[float, float]:
+        return self.cursors[0].value(), self.cursors[1].value()
+
+    def set_cursor_positions(self, t1: float, t2: float) -> None:
+        self.cursors[0].setValue(t1)
+        self.cursors[1].setValue(t2)
+
+    def set_gate_enabled(self, enabled: bool) -> None:
+        """Measure only between the cursors; switching the gate on shows the cursors."""
+        self._gate_on = enabled
+        if enabled and not self.cursors_visible:
+            self.set_cursors_visible(True)
+        self.gate_region.setVisible(enabled)
+        self._follow_cursors()
+
+    @property
+    def gate_visible(self) -> bool:
+        return self.gate_region.isVisible()
+
+    def gate(self) -> tuple[float, float] | None:
+        """The measurement gate (t1 <= t2), or None for the whole record."""
+        if not self._gate_on:
+            return None
+        t1, t2 = sorted(self.cursor_positions())
+        return t1, t2
+
+    def _on_cursor_moved(self, _line=None) -> None:
+        self._follow_cursors()
+        self._update_cursor_readout()
+
+    def _follow_cursors(self) -> None:
+        if self._gate_on:
+            self.gate_region.setRegion(sorted(self.cursor_positions()))
+
+    def _update_cursor_readout(self) -> None:
+        if not self.cursors_visible:
+            self._cursor_readout.hide()
+            return
+        t1, t2 = self.cursor_positions()
+        delta = t2 - t1
+        inverse = 1 / delta if delta else math.nan
+        lines = [f"Δt = {_si(delta, 's')}   1/Δt = {_si(inverse, 'Hz')}"]
+        for name in CHANNELS:
+            waveform = self._waveforms.get(name)
+            if waveform is None or not self.is_curve_visible(name):
+                continue
+            v1, v2 = (_value_at(waveform, t) for t in (t1, t2))
+            text = f"{name}  {_si(v1, 'V')}  {_si(v2, 'V')}  Δ {_si(v2 - v1, 'V')}"
+            lines.append(f'<span style="color: {CHANNEL_COLORS[name]}">{text}</span>')
+        self._cursor_readout.setText("<br>".join(lines))
+        self._cursor_readout.show()
+        self._layout_overlays()
+
+    @property
+    def cursor_text(self) -> str:
+        return "" if self._cursor_readout.isHidden() else self._cursor_readout.text()
+
+    # -- level lines (FR-017) ------------------------------------------------------------------
+
+    def set_level_lines(self, spec: MeasurementSpec | None) -> None:
+        """Dashed lines for the volt levels of the selected measurement, in channel colours."""
+        for line, _index, _channel in self._level_lines:
+            self.plot.removeItem(line)
+        self._level_lines.clear()
+        self._level_volts.clear()
+        if spec is None:
+            return
+        levels = [(0, spec.source, spec.level)] if spec.kind.levels >= 1 else []
+        if spec.kind is Kind.DELTA_T:
+            levels.append((1, spec.source2, spec.level2))
+        for index, channel, level in levels:
+            if level.relative:
+                continue
+            color = CHANNEL_COLORS[channel]
+            line = pg.InfiniteLine(
+                angle=0,
+                movable=True,
+                pen=pg.mkPen(color, style=Qt.PenStyle.DashLine),
+                hoverPen=pg.mkPen(color, width=2),
+                label=f"{channel} {level.label()}",
+                labelOpts={"position": 0.92, "color": color, "anchors": [(1, 1), (1, 1)]},
+            )
+            line.sigDragged.connect(lambda ln, i=index, ch=channel: self._on_level_drag(ln, i, ch))
+            line.sigPositionChangeFinished.connect(lambda _ln, i=index: self._on_level_done(i))
+            self.plot.addItem(line, ignoreBounds=True)
+            self._level_lines.append((line, index, channel))
+            self._level_volts[index] = level.value
+        self._place_level_lines()
+
+    @property
+    def level_lines(self) -> list[pg.InfiniteLine]:
+        return [line for line, _index, _channel in self._level_lines]
+
+    def _place_level_lines(self) -> None:
+        for line, index, channel in self._level_lines:
+            line.setVisible(self._status is not None)
+            if self._status is not None:
+                div = volts_to_div(self._level_volts[index], self._status.channel(channel))
+                line.blockSignals(True)
+                line.setValue(div)
+                line.blockSignals(False)
+
+    def _on_level_drag(self, line: pg.InfiniteLine, index: int, channel: str) -> None:
+        # Keep the dragged value in volts so a scale update does not snap the line back.
+        if self._status is not None:
+            settings = self._status.channel(channel)
+            self._level_volts[index] = float(div_to_volts(line.value(), settings))
+
+    def _on_level_done(self, index: int) -> None:
+        if index in self._level_volts:
+            self.level_dragged.emit(index, self._level_volts[index])
+
+    # -- persistence (FR-018) ------------------------------------------------------------------
+
+    def set_persistence(self, depth: int | None) -> None:
+        """Fade over ``depth`` acquisitions; None = infinite, 0 = off."""
+        self._persistence_depth = depth
+
+    def _restart_persistence(self) -> None:
+        pass
+
+    def _add_persistence(self) -> None:
+        pass
 
     @property
     def no_channels_visible(self) -> bool:
@@ -209,8 +427,9 @@ class ScopePlot(QWidget):
     def _update_range(self, status: ScopeStatus) -> None:
         acq = status.acquisition
         x_min, x_max = x_range(acq)
-        self.plot.setXRange(x_min, x_max, padding=0)
-        self.plot.setYRange(*Y_RANGE_DIV, padding=0)
+        if not self.zoomed:  # while zoomed the user owns the range; the grid still follows
+            self.plot.setXRange(x_min, x_max, padding=0)
+            self.plot.setYRange(*Y_RANGE_DIV, padding=0)
         key = (x_min, x_max, acq.h_divisions)
         if key == self._grid_x:
             return
@@ -234,7 +453,14 @@ class ScopePlot(QWidget):
         left, top, width, height = area.x(), area.y(), area.width(), area.height()
         m = OVERLAY_MARGIN
 
-        for label in (self._no_channels, self._multigrid, self._stale_label, self._hover):
+        overlays = (
+            self._no_channels,
+            self._multigrid,
+            self._stale_label,
+            self._hover,
+            self._cursor_readout,
+        )
+        for label in overlays:
             label.adjustSize()
             label.raise_()
         self._no_channels.move(
@@ -244,6 +470,8 @@ class ScopePlot(QWidget):
         self._multigrid.move(left + m, top + m)
         self._stale_label.move(left + width - self._stale_label.width() - m, top + m)
         self._hover.move(left + m, top + height - self._hover.height() - m)
+        below_note = self._multigrid.height() + m if self.multigrid_note_visible else 0
+        self._cursor_readout.move(left + m, top + m + below_note)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         kind = event.type()
@@ -293,3 +521,23 @@ def _line_pairs(
     hx = np.tile([x_min, x_max], ys.size)
     hy = np.repeat(ys, 2)
     return np.concatenate([vx, hx]), np.concatenate([vy, hy])
+
+
+def _value_at(waveform: Waveform, t: float) -> float:
+    """The waveform's voltage at time t, interpolated between samples; NaN outside the record."""
+    position = (t - waveform.t0) / waveform.dt
+    if not 0 <= position <= waveform.volts.size - 1:
+        return math.nan
+    i = min(int(position), waveform.volts.size - 2)
+    v0, v1 = float(waveform.volts[i]), float(waveform.volts[i + 1])
+    return v0 + (position - i) * (v1 - v0)
+
+
+def _scales(status: ScopeStatus):
+    """What the persistence bins depend on: timebase and every channel's scale."""
+    acq = status.acquisition
+    return (
+        acq.time_per_div,
+        acq.trigger_delay,
+        tuple((ch.volts_per_div, ch.offset, ch.enabled) for ch in status.channels),
+    )

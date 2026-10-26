@@ -74,6 +74,18 @@ class MainWindow(QMainWindow):
         self.side_panel.hidden_changed.connect(self._on_hidden_changed)
         self.side_panel.paused_changed.connect(self._on_paused_changed)
 
+        # Waveform inspection (FR-014 to FR-018).
+        self.side_panel.cursors_toggled.connect(self._on_cursors_toggled)
+        self.side_panel.persistence_changed.connect(self.scope_plot.set_persistence)
+        self.side_panel.reset_view_requested.connect(self.scope_plot.reset_view)
+        self.measurements_panel.gate_changed.connect(self._on_gate_changed)
+        self.measurements_panel.selection_changed.connect(self._on_measurement_selected)
+        self.scope_plot.level_dragged.connect(self.measurements_panel.update_level)
+        self.measurements_panel.export_finished.connect(
+            lambda _ok, message: self.statusBar().showMessage(message)
+        )
+        self._on_measurement_selected()
+
         self.worker_thread = QThread(self)
         self.worker_thread.setObjectName("scope-io")
         self.worker = AcquisitionWorker(driver_factory)
@@ -127,6 +139,19 @@ class MainWindow(QMainWindow):
         self.view.hidden_channels = set(hidden)
         self.scope_plot.set_hidden(self.view.hidden_channels)
 
+    def _on_cursors_toggled(self, on: bool) -> None:
+        self.scope_plot.set_cursors_visible(on)
+        if not on:
+            self.measurements_panel.set_gate_between_cursors(False)
+
+    def _on_gate_changed(self, between_cursors: bool) -> None:
+        if between_cursors:
+            self.side_panel.cursors_checkbox.setChecked(True)
+        self.scope_plot.set_gate_enabled(between_cursors)
+
+    def _on_measurement_selected(self) -> None:
+        self.scope_plot.set_level_lines(self.measurements_panel.selected_spec)
+
     def _on_paused_changed(self, paused: bool) -> None:
         # Pausing freezes only the PC display; the worker and the scope keep running (FR-016).
         self.view.paused = paused
@@ -168,7 +193,7 @@ class MainWindow(QMainWindow):
             return
         self.scope_plot.set_waveforms(waveforms)
         # Every received channel is measured, also those hidden on the PC (FR-008).
-        self.measurements_panel.process(waveforms)
+        self.measurements_panel.process(waveforms, self.scope_plot.gate())
         self.view.last_update = datetime.now()
         self._update_rate_label()
 

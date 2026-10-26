@@ -280,6 +280,19 @@ def test_statistics_kept_after_disconnect_and_lost_connection(bench, qtbot):
     assert sizes(window) == lost and lost[2] > kept[2]
 
 
+def test_export_after_disconnect(bench, qtbot, tmp_path):
+    window, scope, received = measured_bench(bench, qtbot)
+    disconnect(window, qtbot)
+    panel = window.measurements_panel
+    path = tmp_path / "after.csv"
+    with qtbot.waitSignal(panel.export_finished, timeout=10000) as signal:
+        panel.export(str(path))
+    assert signal.args[0]
+    lines = path.read_text(encoding="utf-8-sig").splitlines()
+    assert len(lines) == 1 + len(received)
+    assert lines[0] == "trigger_time_s,Amplitude C2 [V],Frequency C1 [Hz]"
+
+
 # --- launcher -----------------------------------------------------------------------------------
 def test_bench_launcher_builds_an_isolated_window(qtbot, monkeypatch, tmp_path):
     import bench  # tests/bench.py

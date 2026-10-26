@@ -89,6 +89,7 @@ def test_undefined_values_show_a_dash(panel):
 
 def test_value_formats():
     assert format_value(1.2345e-10, "s") == "123.5 ps"
+    assert format_value(0.99999994, "V") == "1 V"  # not "1000 mV"
     assert format_value(42.123, "%") == "42.12 %"
     assert format_value(7.0, "") == "7"
     assert format_value(math.nan, "V") == "—"
@@ -226,3 +227,162 @@ def test_dialog_edits_an_existing_spec(qtbot):
     qtbot.addWidget(dialog)
     assert dialog.spec() == spec
     assert dialog.windowTitle() == "Edit measurement"
+
+
+# --- gate and level lines (US4) -------------------------------------------------------------------
+
+
+def test_gate_combo(panel, qtbot):
+    assert [panel.gate_combo.itemText(i) for i in range(2)] == ["Whole record", "Between cursors"]
+    assert not panel.gate_between_cursors
+    with qtbot.waitSignal(panel.gate_changed) as signal:
+        panel.gate_combo.setCurrentIndex(1)
+    assert signal.args == [True]
+    assert panel.gate_between_cursors
+
+
+def test_process_uses_the_gate(panel):
+    panel.add(MAX_C1)
+    panel.process(acquisition(peak=2.0), gate=(0.0, 49e-9))  # first half of the ramp only
+    assert panel.stats[0].last == pytest.approx(2.0 * 49 / 99, rel=1e-4)
+
+
+def test_update_level_replaces_only_the_selected_measurement(panel):
+    dt = MeasurementSpec(Kind.DELTA_T, "C2", Level(0.03), "C4", Level(-0.4, edge=Edge.FALLING))
+    panel.add(MAX_C1)
+    panel.add(dt)
+    panel.process(acquisition())
+    panel.table.selectRow(1)
+    panel.update_level(1, -0.25)
+    assert panel.specs[1].level2 == Level(-0.25, edge=Edge.FALLING)
+    assert panel.specs[1].level == Level(0.03)
+    assert [s.size for s in panel.stats] == [1, 0]
+    assert panel.cell_text(1, "Measurement") == "Δt C2 ↑ 30 mV → C4 ↓ -250 mV"
+    assert settings.load_measurements()[1] == panel.specs[1]
+
+
+# --- wiring in the main window -----------------------------------------------------------------
+
+
+@pytest.fixture
+def window(qtbot):
+    from scope_gui.ui.main_window import MainWindow
+
+    widget = MainWindow("192.168.0.9")
+    qtbot.addWidget(widget)
+    yield widget
+    widget.close()
+
+
+def test_window_has_measurements_dock_and_view_menu(window):
+    assert window.measurements_dock.widget() is window.measurements_panel
+    actions = [a.text() for a in window.view_menu.actions()]
+    assert "Measurements" in actions
+
+
+def test_gate_between_cursors_switches_cursors_on(window):
+    panel, plot = window.measurements_panel, window.scope_plot
+    panel.set_gate_between_cursors(True)
+    assert window.side_panel.cursors_checkbox.isChecked()
+    assert plot.cursors_visible and plot.gate_visible
+    window.side_panel.cursors_checkbox.setChecked(False)  # no cursors: back to whole record
+    assert not panel.gate_between_cursors and plot.gate() is None
+
+
+def test_selected_measurement_drives_level_lines(window):
+    from test_scope_plot import make_status
+
+    window.scope_plot.set_status(make_status())
+    panel = window.measurements_panel
+    panel.add(MAX_C1)
+    assert window.scope_plot.level_lines == []
+    panel.add(TIME_C2)  # selected: one volt level on C2
+    assert len(window.scope_plot.level_lines) == 1
+    window.scope_plot.level_dragged.emit(0, 0.25)
+    assert panel.specs[1].level == Level(0.25)
+    assert window.scope_plot.level_lines[0].label.format == "C2 ↑ 250 mV"
+
+
+# --- export (US5) ---------------------------------------------------------------------------------
+
+
+def read_csv(path):
+    import csv
+
+    raw = path.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")  # UTF-8 BOM for spreadsheet programs
+    with open(path, encoding="utf-8-sig", newline="") as file:
+        return list(csv.reader(file))
+
+
+def export(panel, qtbot, path):
+    with qtbot.waitSignal(panel.export_finished, timeout=30000) as signal:
+        panel.export(str(path))
+    return signal.args
+
+
+def test_export_rows_columns_and_missed_cells(panel, qtbot, tmp_path, monkeypatch):
+    panel.add(MAX_C1)
+    panel.add(MAX_C2)
+    for i in range(200):
+        panel.process(acquisition(trigger_time=i, with_c2=i % 10 != 0))
+    panel.add(TIME_C2)  # added later: empty before it existed (US5-2)
+    for i in range(200, 500):
+        panel.process(acquisition(trigger_time=i))
+    path = tmp_path / "run.csv"
+    monkeypatch.setattr(panel, "ask_export_path", lambda: str(path))
+    with qtbot.waitSignal(panel.export_finished, timeout=30000) as signal:
+        panel.export_button.click()
+    ok, message = signal.args
+    assert ok and str(path) in message and "500 acquisitions" in message
+    rows = read_csv(path)
+    assert rows[0] == ["trigger_time_s", "Maximum C1 [V]", "Maximum C2 [V]", "Time C2 ↑ 500 mV [s]"]
+    body = rows[1:]
+    assert len(body) == 500
+    assert [float(r[0]) for r in body] == list(range(500))
+    assert body[0][2] == "" and body[1][2] == "1"  # missed: C2 off in acquisition 0
+    assert all(r[3] == "" for r in body[:200])
+    assert float(body[200][3]) == pytest.approx(49.5e-9)
+
+
+def test_cancelled_export_writes_nothing(panel, monkeypatch, tmp_path):
+    monkeypatch.setattr(panel, "ask_export_path", lambda: "")
+    panel.export_button.click()
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_large_export_does_not_block(panel, qtbot, tmp_path):
+    import time
+
+    n = 100_000
+    for k in range(10):
+        panel.add(MeasurementSpec(Kind.MAXIMUM, "C1"))
+        stats = panel.stats[-1]
+        stats._buffer[:] = np.arange(n) + k
+        stats._next, stats._size = 0, n
+    panel.trigger_log._buffer[:] = np.arange(n)
+    panel.trigger_log._next, panel.trigger_log._size = 0, n
+    path = tmp_path / "big.csv"
+    with qtbot.waitSignal(panel.export_finished, timeout=60000) as signal:
+        start = time.perf_counter()
+        panel.export(str(path))
+        assert time.perf_counter() - start < 0.2  # the write runs in a pool thread (SC-006)
+    assert signal.args[0]
+    rows = read_csv(path)
+    assert len(rows) == n + 1 and len(rows[0]) == 11
+    assert rows[-1][:3] == ["99999", "99999", "100000"]
+
+
+def test_failed_export_reports_instead_of_raising(panel, qtbot, tmp_path):
+    panel.add(MAX_C1)
+    panel.process(acquisition())
+    ok, message = export(panel, qtbot, tmp_path / "missing-folder" / "x.csv")
+    assert not ok and message.startswith("Export failed")
+
+
+def test_export_result_in_status_bar(window, qtbot, tmp_path):
+    panel = window.measurements_panel
+    panel.add(MAX_C1)
+    panel.process(acquisition())
+    export(panel, qtbot, tmp_path / "one.csv")
+    assert "Exported 1 acquisition to" in window.statusBar().currentMessage()

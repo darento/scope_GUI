@@ -21,6 +21,21 @@ as we are processing the waveform when doing the visualization."
 - Q: Scope settings change during a run (V/div, offset, timebase)? → A: Keep accumulating and
   show a warning note until the user clears the statistics.
 
+### Amendments from planning research (2026-10-26)
+
+Measured on the synthetic bench (see [research.md](research.md)); no change in intent:
+
+- Base and noise come from the whole record even when gated (a tight gate around a pulse gave a
+  wrong base) — FR-007.
+- Amplitude-relative quantities are missed on noise-only acquisitions (they produced Δt
+  outliers of ±100 ns) — FR-007a.
+- Histogram range defaults to a robust automatic range (dark-count outliers squeezed the
+  timing peak into one bin) — FR-012.
+- Persistence is a fading density display, not N overlaid traces (overlaying 20 × 4 traces of
+  100k points took 2.3 s per update) — FR-018, US4-5.
+- SC-002 is stated for signals where noise jitter is negligible, so it checks the analysis and
+  not the bench's noise.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Synthetic signal bench for development and demos (Priority: P1)
@@ -132,8 +147,9 @@ scope's own screen with one action. They switch on two time cursors and read the
 them and each channel's voltage at each cursor. They can restrict all measurements to the time
 window between the cursors (a gate), e.g. to measure only the pulse and not a later dark count.
 The level of a selected threshold measurement is drawn on the plot as a line in the channel's
-colour, and dragging the line changes the level. A persistence mode overlays the last N
-acquisitions so the photoelectron "bands" of a SiPM or the jitter of an edge become visible.
+colour, and dragging the line changes the level. A persistence mode shows where recent
+acquisitions went, fading out over about N acquisitions (or never, until cleared), so the
+photoelectron "bands" of a SiPM or the jitter of an edge become visible.
 
 **Why this priority**: These make the measurements understandable and easy to set up, but the
 measurements and distributions are useful without them.
@@ -153,8 +169,10 @@ shows 100 ns and 10 MHz.
    plot and measurements use only samples inside it.
 4. **Given** a selected measurement with a level in volts, **When** the user drags its line,
    **Then** the measurement's level becomes the dropped value and its statistics restart.
-5. **Given** persistence set to N, **Then** the last N acquisitions are drawn dimmed behind the
-   current one; setting it to 0 removes them.
+5. **Given** persistence set to N, **Then** behind the current traces each channel shows, in
+   its colour, how often recent acquisitions passed through each point of the screen, older
+   ones fading out over about N acquisitions; "infinite" never fades; Off removes it. Zooming,
+   resetting the view or a scale change restarts the persistence.
 
 ---
 
@@ -236,9 +254,13 @@ was missed.
   than the sample interval.
 - **FR-007**: Base and top MUST be estimated per acquisition and channel: for square-like
   signals the typical low and high levels; for narrow pulses the baseline and the peak; for
-  negative pulses top is below base. Amplitude = top − base; percentage levels, rise/fall time,
-  width, period and duty cycle are relative to base and top; Area is the integral of
-  (signal − base) over the record or gate (volt-seconds).
+  negative pulses top is below base. Base (and the noise level) always come from the whole
+  record; for pulses, top is the peak inside the gate. Amplitude = top − base; percentage
+  levels, rise/fall time, width, period and duty cycle are relative to base and top; Area is
+  the integral of (signal − base) over the record or gate (volt-seconds).
+- **FR-007a**: Quantities relative to the amplitude (percentage levels, rise/fall time, width,
+  period, duty cycle) MUST count as missed when the signal does not stand out of its noise
+  (amplitude below 5 × the noise rms), instead of returning values computed on noise.
 - **FR-008**: Each new acquisition MUST be measured exactly once; measurements MUST use every
   received acquisition of the channel even if it is hidden on the PC.
 - **FR-009**: For each measurement the app MUST show last value, mean, standard deviation,
@@ -251,7 +273,10 @@ was missed.
 
 - **FR-012**: Users MUST be able to show, for the selected measurement, a histogram with
   adjustable bin count and linear/log count axis, a trend over acquisitions, or a
-  correlation plot against a second measurement.
+  correlation plot against a second measurement. The histogram range MUST default to a robust
+  automatic range around the bulk of the values (so a few outliers do not squeeze the peak
+  into one bin) with the number of values outside shown; full range and a manual range MUST
+  also be available.
 - **FR-013**: Users MUST be able to fit a Gaussian to the histogram's main peak and read mean,
   sigma and FWHM; the fit MUST follow the highest peak and not be pulled by tails or other
   peaks.
@@ -268,8 +293,9 @@ was missed.
   between the cursors; the gate MUST be shown on the plot.
 - **FR-017**: The volt levels of the selected measurement MUST be drawn as lines in the
   channel colour; dragging a line MUST set that level.
-- **FR-018**: Users MUST be able to overlay the last N acquisitions (N from 0 to 50) dimmed
-  behind the current traces.
+- **FR-018**: Users MUST be able to switch on a persistence display: per channel, the density of
+  recent acquisitions on the screen, fading over about N acquisitions (N from 2 to 1000) or
+  infinite until cleared; it restarts when the view or a channel's scale changes.
 
 **Export and safety**
 
@@ -295,7 +321,7 @@ was missed.
 - **Acquisition record**: the trigger time of each processed acquisition, aligned with the
   histories, used for export.
 - **Analysis view state**: selected measurement, view (histogram / trend / correlation), bins,
-  log axis, fit on/off, gate mode, cursor positions, zoom, persistence depth. GUI-only, never
+  log axis, fit on/off, gate mode, cursor positions, zoom, persistence depth (fade length or infinite). GUI-only, never
   sent to the scope.
 - **Synthetic scene** (test-only): the signal parameters the synthetic scope generates from,
   and per acquisition the true values (photoelectrons, arrival times).
@@ -306,9 +332,11 @@ was missed.
 
 - **SC-001**: Starting from a connected live view, a user can define a Δt measurement between
   two channels and see its histogram with a Gaussian fit in under 1 minute.
-- **SC-002**: On the synthetic bench, after 2,000 acquisitions the fitted sigma of the
-  constant-fraction Δt between the two SiPM signals is within 10 % of the true combined jitter,
-  its mean within 20 ps of the true delay, and the clock frequency within 0.1 % of 10 MHz.
+- **SC-002**: On the synthetic bench, with signals large enough that electronic noise adds
+  little timing jitter (≥ 20 photoelectrons on average), after 2,000 acquisitions the fitted
+  sigma of the constant-fraction Δt between the two SiPM signals is within 10 % of the true
+  combined arrival jitter and its mean within 20 ps of the true delay; with the default scene
+  the clock frequency is within 0.1 % of 10 MHz.
 - **SC-003**: On noiseless test edges, interpolated crossing times are within 1 % of the
   sample interval of the true crossing.
 - **SC-004**: On the bench, the C2 amplitude histogram shows at least four separate

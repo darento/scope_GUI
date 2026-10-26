@@ -46,6 +46,8 @@ Start the bench and press Connect. The demo measurements are listed. Contracts:
 
 ## Manual validation — real scope
 
+Step by step, with the hardware tests and SC-001 timing: [hardware-check.md](hardware-check.md).
+
 | # | Steps | Expected | Spec |
 |---|-------|----------|------|
 | R1 | 100k points × 4 channels, note the update rate; add 10 measurements, histogram shown | Rate within 10 % of before; window responsive | SC-005 |

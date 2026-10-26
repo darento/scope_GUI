@@ -36,6 +36,17 @@ Measured on the synthetic bench (see [research.md](research.md)); no change in i
 - SC-002 is stated for signals where noise jitter is negligible, so it checks the analysis and
   not the bench's noise.
 
+From `/speckit-analyze` (2026-10-26):
+
+- US2 and US3 independent tests quantified; the US2 jitter check uses 20 photoelectrons
+  (dark-count outliers at 3 photoelectrons).
+- FR-002 noise is band-limited (as on a real scope), not white.
+- Hysteresis edge case matches R4 (5 % of amplitude or 3 × noise rms); noise is at least one
+  digitiser step (flat signals) — FR-007a.
+- FR-018 fade lengths are the offered choices 10 / 100 / 1000.
+- FR-021 made measurable (0.2 s, 10 %); at 2.5M points the reference levels use ≤ 100k samples
+  and persistence is rasterised per pixel column to stay within it (research R1, R7).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Synthetic signal bench for development and demos (Priority: P1)
@@ -87,8 +98,11 @@ and clear the statistics at any time.
 are the information the lab extracts from these signals; this is the core of the feature.
 
 **Independent Test**: On the bench, add "Δt C2 lead 20 % → C3 lead 20 %" and "Frequency C1";
-after a few hundred acquisitions the Δt mean is close to the known 2 ns delay, its standard
-deviation close to the known combined jitter, and the frequency reads 10 MHz.
+with about 20 photoelectrons per pulse (`--mean-pe 20`), after a few hundred acquisitions the
+Δt mean is within 20 ps of the known 2 ns delay, its standard deviation within 10 % of the
+known combined jitter, and the frequency reads 10 MHz. (With the default 3 photoelectrons,
+dark counts make a quarter of the Δt values outliers, so only the histogram fit of User Story 3
+gives the jitter there.)
 
 **Acceptance Scenarios**:
 
@@ -123,7 +137,9 @@ judged; this turns the statistics into physics results. Depends on User Story 2.
 
 **Independent Test**: On the bench, select the C2 amplitude measurement and verify the
 histogram shows separate peaks spaced by the known photoelectron amplitude; select the
-constant-fraction Δt and verify the fitted sigma is close to the known combined jitter.
+constant-fraction Δt and verify the fitted mean is within 20 ps of 2 ns and the fitted sigma
+within 15 % of the known combined jitter (default scene; within 10 % with 20 photoelectrons,
+SC-002).
 
 **Acceptance Scenarios**:
 
@@ -209,8 +225,11 @@ was missed.
   measured on the clipped samples, as the scope would; the amplitude histogram shows the
   pile-up at the clipping level.
 - Noise riding on a threshold: a crossing only counts again after the signal has moved back
-  past the level by a small hysteresis (5 % of the signal's amplitude), so noise does not
-  create extra edges.
+  past the level by a small hysteresis (5 % of the signal's amplitude or 3 × its noise rms,
+  whichever is larger), so noise does not create extra edges.
+- Flat signal, or noise smaller than one digitiser step: the noise level is taken as at least
+  one digitiser step, so amplitude-relative quantities are missed instead of measured on a
+  one-step wiggle (FR-007a).
 - Gate narrower than two samples, or entirely outside the record: every measurement is missed.
 - Pause pressed: statistics, histograms and the export history stop accumulating too, so what
   is shown is exactly what was measured; they continue on Resume (FR-023).
@@ -233,7 +252,7 @@ was missed.
   (Constitution I and IV).
 - **FR-002**: The synthetic scope MUST produce: a square clock, a positive and a negative
   SiPM-like signal (Poisson-distributed photoelectron count with per-photoelectron gain
-  spread, fast rise, exponential decay, random dark counts, white noise, Gaussian arrival
+  spread, fast rise, exponential decay, random dark counts, band-limited noise, Gaussian arrival
   jitter) and a NIM logic pulse fired by one SiPM signal crossing a discriminator level; the
   scope's 8-bit resolution and screen clipping MUST be reproduced.
 - **FR-003**: The synthetic scope's signal parameters (rates, delays, jitters, amplitudes,
@@ -260,7 +279,8 @@ was missed.
   the integral of (signal − base) over the record or gate (volt-seconds).
 - **FR-007a**: Quantities relative to the amplitude (percentage levels, rise/fall time, width,
   period, duty cycle) MUST count as missed when the signal does not stand out of its noise
-  (amplitude below 5 × the noise rms), instead of returning values computed on noise.
+  (amplitude below 5 × the noise rms, the noise being at least one digitiser step), instead of
+  returning values computed on noise.
 - **FR-008**: Each new acquisition MUST be measured exactly once; measurements MUST use every
   received acquisition of the channel even if it is hidden on the PC.
 - **FR-009**: For each measurement the app MUST show last value, mean, standard deviation,
@@ -294,7 +314,7 @@ was missed.
 - **FR-017**: The volt levels of the selected measurement MUST be drawn as lines in the
   channel colour; dragging a line MUST set that level.
 - **FR-018**: Users MUST be able to switch on a persistence display: per channel, the density of
-  recent acquisitions on the screen, fading over about N acquisitions (N from 2 to 1000) or
+  recent acquisitions on the screen, fading over about N acquisitions (N = 10, 100 or 1000) or
   infinite until cleared; it restarts when the view or a channel's scale changes.
 
 **Export and safety**
@@ -304,8 +324,9 @@ was missed.
   blocking the window.
 - **FR-020**: None of the analysis features may send any command to the scope; the
   application stays strictly read-only (feature 001, FR-018, Constitution III).
-- **FR-021**: Analysis MUST NOT block the window; with the default record length and up to ten
-  measurements it MUST NOT measurably lower the achieved update rate on the real scope.
+- **FR-021**: Analysis MUST NOT block the window (no GUI stall above 0.2 s, up to 2.5M points
+  × 4 channels); with up to ten measurements the achieved update rate on the real scope MUST
+  stay within 10 % of the rate without measurements (SC-005).
 - **FR-022**: When the scope's channel or acquisition settings change while statistics hold
   values, the app MUST keep the statistics and show a "Scope settings changed during this run"
   note until they are cleared.

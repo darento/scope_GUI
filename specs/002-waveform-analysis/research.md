@@ -16,9 +16,18 @@ prototype is a spike: implementation starts from this design, not from its code.
 | 10k points | 1.3 ms |
 | 100k points | 7.3 ms |
 | 500k points | 57 ms |
+| 2.5M points | 304 ms |
+
+*(measured, 2.5M points)* 166 ms of the 304 ms are the medians of the reference levels (R2) over
+the whole record (41 ms per channel); the same medians over 100k evenly spaced samples of the
+record take 2 ms per channel. The crossing scans take the rest (≈ 13 ms per measurement).
 
 - **Decision**: Run measurements on the GUI thread, in the `waveforms_updated` slot, before
   drawing. Skip them while paused (FR-023).
+  - Base, top (square-like) and noise are medians over at most 100,000 evenly spaced samples
+    of the whole record; the pulse peak and all crossings still use every sample. Expected
+    ≈ 0.15 s at 2.5M × 4 with 10 measurements, below the 0.2 s responsiveness limit
+    (Principle II); confirmed by T039.
 - **Rationale**: Real update rates are scope-bound (≤ 5/s at 100k × 4, ~1.5/s at 500k × 3,
   feature 001 R2). 7 ms per update is < 4 % of the GUI's time at 5/s; 57 ms at 1.5/s is < 9 %
   and far below the 0.2 s responsiveness limit. Waveforms already arrive on the GUI thread, so
@@ -130,14 +139,21 @@ instead of ~0.13 ns.
 | Density image: binning + colouring | 34 ms |
 | Plain 4 curves (reference) | 23 ms |
 
+*(measured, one channel × 2.5M points, 1000 × 400 pixels)* Binning every sample: 40 ms;
+min–max span per pixel column: 1.3 ms. Binning samples also leaves gaps on fast edges, where
+consecutive samples are several pixels apart.
+
 - **Decision**: A density map over the current view (≈ 1 px per bin). On each acquisition:
   - existing density × (1 − 1/N), or no fading for infinite;
-  - add each channel's samples, binned into its own layer;
+  - add each channel's trace into its own layer, rasterised per pixel column: every pixel
+    between the minimum and maximum of the column's samples (extended to the neighbouring
+    columns' values so the trace stays connected, interpolated when there are fewer samples
+    than columns) gets one hit, like a drawn trace;
   - colour each layer with the channel colour at √density, sum into one RGB image, and show
     it behind the traces.
 - Reset on any view or scale change, since the bins would no longer match.
-- **Rationale**: Mirrors the scope's analog persistence; cost independent of depth; makes
-  photoelectron bands and edge jitter visible.
+- **Rationale**: Mirrors the scope's analog persistence; cost independent of depth and nearly
+  independent of record length; makes photoelectron bands and edge jitter visible.
 - **Alternatives**: Exact "last N" (ring of N sparse histograms): more code for no visible
   difference. Overlaid curves: too slow (above).
 

@@ -57,5 +57,6 @@ grows to 1400 × 900.
 - No control in this feature sends anything to the scope; the driver allowlist is unchanged
   (FR-020).
 - Paused: no table, histogram or persistence change; statistics do not grow (FR-023).
-- Disconnect / connection lost: statistics, histogram and export stay available.
+- Disconnect / connection lost: statistics, histogram and export stay available; zoom and
+  cursors are kept, persistence is cleared with the traces.
 - Measurement definitions persist between sessions; statistics do not (FR-011).

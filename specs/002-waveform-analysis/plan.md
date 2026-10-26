@@ -57,9 +57,10 @@ on the real scope within 10 % of the rate without analysis (SC-005); UI input la
 - File writes happen off the GUI thread (Constitution II).
 - History is capped at 100,000 values per measurement (0.8 MB each).
 
-**Scale/Scope**: 1 user, 4 channels, up to ~20 measurements, records up to ~2.5 M points
-(analysis ~0.3 s per acquisition at 2.5 M × 4, extrapolated from R1: acceptable at that length's ~0.3 Hz rate,
-documented).
+**Scale/Scope**: 1 user, 4 channels, up to ~20 measurements, records up to ~2.5 M points.
+At 2.5 M × 4 the prototype took 304 ms per acquisition, above the 0.2 s responsiveness limit;
+with reference levels taken from ≤ 100k evenly spaced samples (R1) and persistence rasterised
+per pixel column (R7) the expected GUI-thread cost is ≈ 0.15 s, confirmed by T039.
 
 All unknowns were resolved by measurement in [research.md](research.md) (R1–R15). No NEEDS
 CLARIFICATION remain.
@@ -73,7 +74,7 @@ Constitution v2.0.0.
 | Principle | Pre-design | Post-design | Evidence |
 |-----------|-----------|-------------|----------|
 | I. Hardware behind a driver layer (real driver only, no simulation) | PASS | PASS | `analysis.py` and the new widgets never touch the driver; the synthetic scope is a *resource* stand-in under `tests/` used through the unchanged `ScopeDriver` (R13). The app has no simulated mode: `scope-gui` cannot reach it, which a test enforces ([contracts/synthetic-bench.md](contracts/synthetic-bench.md)) |
-| II. Responsive UI | PASS | PASS | Analysis on the GUI thread costs ≤ 7 ms per update at 100k × 4 and 57 ms at 500k (R1, below the 0.2 s limit); persistence 34 ms (R7); CSV export in a `QThreadPool` task (R11) |
+| II. Responsive UI | PASS | PASS | Analysis on the GUI thread costs ≤ 7 ms per update at 100k × 4 and 57 ms at 500k (R1, below the 0.2 s limit); at 2.5M the reference levels use ≤ 100k samples to stay below it (R1); persistence 34 ms, rasterised per pixel column so it barely grows with record length (R7); CSV export in a `QThreadPool` task (R11) |
 | III. Safe by default | PASS | PASS | No new commands; `ALLOWED_COMMANDS` unchanged; allowlist test unchanged; hardware session check repeated with analysis active (SC-007) |
 | IV. Testable without hardware | PASS | PASS | Everything is testable on the bench or with analytic signals; the bench and fakes live only in `tests/`; hardware checks stay opt-in |
 | V. Simple and pragmatic | PASS | PASS | No new dependencies (scipy rejected, R5); one pure module plus three widgets; no plugin or measurement framework: a flat `Kind` enum and one `measure()` function |

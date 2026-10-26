@@ -31,7 +31,8 @@ whatever the polarity.
 
 Missed (NaN) when: the source (or source 2) has no waveform in this acquisition, fewer than 2
 samples are in the gate, the needed crossing does not exist, or the quantity is
-amplitude-relative and |top − base| < 5 × noise rms (FR-007a).
+amplitude-relative and |top − base| < 5 × noise rms, the noise rms being at least one
+digitiser step (the waveform's vertical gain per code) (FR-007a).
 
 ## Level
 
@@ -60,8 +61,8 @@ Serialised with `to_dict` / `from_dict` (enum names, not labels) for `QSettings`
 
 The gated samples of one `Waveform`, plus cached reference levels.
 
-- Reference (whole record): base, noise rms, polarity (+1 pulses, −1 negative pulses, 0
-  square-like).
+- Reference (whole record, from at most 100,000 evenly spaced samples, R1): base, noise rms,
+  polarity (+1 pulses, −1 negative pulses, 0 square-like).
 - Levels (gated): top = gated peak for pulses, record top for square-like.
 - Built once per channel per acquisition by `measure_all(specs, waveforms, gate)`, so the
   reference levels are shared by every measurement of that acquisition.

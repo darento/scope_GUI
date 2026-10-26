@@ -6,21 +6,28 @@ Generates a fresh acquisition every time the worker checks for one (``Cn:WF? DES
 Default scene (trigger on the C1 clock edge at t = 0):
 
 - C1: 10 MHz clock, 0 -> 2.5 V, ~1 ns edges, 15 ps jitter.
-- C2: SiPM A, positive pulses. Poisson(3) photoelectrons x 20 mV, rise 1 ns, decay 30 ns,
-  arriving at 35 ns (70 ps jitter), plus 1-pe dark counts at 1 MHz and 1.2 mV noise.
+- C2: SiPM A, positive pulses. Poisson(3) photoelectrons x 20 mV (10 % gain spread), rise 1 ns,
+  decay 30 ns, arriving at 35 ns (70 ps jitter), plus 1-pe dark counts at 1 MHz and 1.2 mV noise
+  band-limited to 1 GHz.
 - C3: SiPM B, same but negative and arriving at 37 ns (90 ps jitter).
-- C4: NIM discriminator on C2: -0.8 V for 20 ns, 8 ns after C2 crosses 30 mV (30 ps jitter).
+- C4: NIM discriminator on C2: -0.8 V for 20 ns, 8 ns after the C2 signal crosses 30 mV
+  (30 ps jitter).
 """
 
+import copy
 import math
 import time
 from dataclasses import dataclass, field
 
 import numpy as np
 from fakes import _timeout_error, build_wavedesc
+from pyvisa import constants
+from pyvisa.errors import VisaIOError
 
 CHANNEL_INDEX = {"C1": 0, "C2": 1, "C3": 2, "C4": 3}
 CODES_PER_DIV = 25  # 8-bit codes: +-127 codes span +-5.08 div, like the WR610Zi
+CODE_MIN, CODE_MAX = -128, 127
+DESCRIPTOR_LENGTH = 346  # bytes of WAVEDESC
 
 
 @dataclass
@@ -31,15 +38,29 @@ class ChannelSetup:
     coupling: str = "D50"
 
 
+def default_channels() -> dict[str, ChannelSetup]:
+    return {
+        "C1": ChannelSetup(1.0, -0.25),
+        "C2": ChannelSetup(0.020, -0.060),
+        "C3": ChannelSetup(0.020, 0.060),
+        "C4": ChannelSetup(0.5, 1.0),
+    }
+
+
 @dataclass
 class Scene:
+    # Acquisition
     time_per_div: float = 50e-9
     trigger_delay: float = -150e-9  # screen centre at +150 ns: trigger 2 div from the left
     points: int = 10_000
+    bandwidth: float = 1e9  # front-end bandwidth: noise is correlated over ~0.35/bandwidth
+    # C1: clock
     clock_period: float = 100e-9
     clock_high: float = 2.5
     clock_jitter: float = 15e-12
+    clock_noise: float = 0.02  # V rms
     edge_time: float = 1e-9  # 10-90 % of the clock and NIM edges
+    # C2 / C3: SiPM A (positive) and B (negative)
     mean_pe: float = 3.0
     pe_volts: float = 0.020
     gain_spread: float = 0.10  # relative sigma of one photoelectron's amplitude
@@ -50,20 +71,15 @@ class Scene:
     jitter_a: float = 70e-12
     jitter_b: float = 90e-12
     dark_rate: float = 1e6
-    sipm_noise: float = 1.2e-3
-    bandwidth: float = 1e9  # front-end bandwidth: noise is correlated over ~0.35/bandwidth
+    sipm_noise: float = 1.2e-3  # V rms
+    # C4: NIM discriminator on the SiPM A signal
     discriminator: float = 0.030
     nim_delay: float = 8e-9
     nim_width: float = 20e-9
+    nim_level: float = -0.8
     nim_jitter: float = 30e-12
-    channels: dict[str, ChannelSetup] = field(
-        default_factory=lambda: {
-            "C1": ChannelSetup(1.0, -0.25),
-            "C2": ChannelSetup(0.020, -0.060),
-            "C3": ChannelSetup(0.020, 0.060),
-            "C4": ChannelSetup(0.5, 1.0),
-        }
-    )
+    nim_noise: float = 0.01  # V rms
+    channels: dict[str, ChannelSetup] = field(default_factory=default_channels)
 
     @property
     def t0(self) -> float:
@@ -81,74 +97,134 @@ def _edge(t: np.ndarray, at: float, edge_time: float) -> np.ndarray:
 
 
 def _band_limited(white: np.ndarray, rise_samples: float) -> np.ndarray:
-    """White noise smoothed to a rise time of ``rise_samples``, rescaled to unit rms."""
+    """Unit-rms white noise smoothed to a 10-90 % rise of ``rise_samples`` (rms stays 1)."""
     sigma = rise_samples / 2.56  # Gaussian filter: 10-90 % rise = 2.56 sigma
     if sigma < 0.5:
         return white
     k = np.arange(-math.ceil(4 * sigma), math.ceil(4 * sigma) + 1)
-    kernel = np.exp(-0.5 * (k / sigma) ** 2)
-    smooth = np.convolve(white, kernel / kernel.sum(), mode="same")
-    return smooth / smooth.std()
+    weights = np.exp(-0.5 * (k / sigma) ** 2)
+    weights /= weights.sum()
+    return np.convolve(white, weights, mode="same") / math.sqrt(np.sum(weights**2))
 
 
 def sipm_pulse(t: np.ndarray, at: float, amplitude: float, rise: float, decay: float):
     """Double-exponential pulse starting at ``at`` with peak ``amplitude``."""
     peak_t = rise * decay / (decay - rise) * math.log(decay / rise)
     norm = math.exp(-peak_t / decay) - math.exp(-peak_t / rise)
-    s = np.clip(t - at, 0, None)
-    return amplitude / norm * (np.exp(-s / decay) - np.exp(-s / rise))
+    out = np.zeros_like(t)
+    first = int(np.searchsorted(t, at))
+    s = t[first:] - at
+    out[first:] = amplitude / norm * (np.exp(-s / decay) - np.exp(-s / rise))
+    return out
 
 
 class SyntheticAcquisition:
-    """One trigger: volts per channel plus the true values the scene was built from."""
+    """One trigger: volts per channel plus the true values the scene was built from.
+
+    ``scene`` is a snapshot: later changes to the scope's scene do not alter this acquisition.
+    The true values are ``npe_a``/``npe_b`` (signal photoelectrons), ``arrival_a``/``arrival_b``
+    (onset of the signal pulses, jitter included) and ``fired`` (the discriminator saw the
+    signal of SiPM A cross its level; dark counts and noise are not seen by it, so ``fired`` is
+    false whenever ``npe_a == 0``). ``nim_start`` is the NIM pulse start, ``None`` if not fired.
+    """
 
     def __init__(self, scene: Scene, rng: np.random.Generator):
-        sc = scene
+        sc = self.scene = copy.deepcopy(scene)
         t = sc.t0 + np.arange(sc.points) * sc.dt
         self.times = t
-        span = (t[0], t[-1])
+        first, last = float(t[0]), float(t[-1])
 
         # C1: clock, triggered on its rising edge at t = 0.
         phase = rng.normal(0, sc.clock_jitter)
-        rising = np.arange(math.floor(span[0] / sc.clock_period) - 1, span[1] / sc.clock_period + 1)
+        n_first = math.floor(first / sc.clock_period) - 1
+        rising = np.arange(n_first, last / sc.clock_period + 1)
         c1 = np.zeros_like(t)
         for k in rising * sc.clock_period + phase:
             c1 += _edge(t, k, sc.edge_time) - _edge(t, k + sc.clock_period / 2, sc.edge_time)
         c1 *= sc.clock_high
 
-        def sipm(arrival: float, jitter: float, sign: float):
+        def sipm(arrival: float, jitter: float):
             npe = int(rng.poisson(sc.mean_pe))
             at = arrival + rng.normal(0, jitter)
             amplitude = sc.pe_volts * (npe + math.sqrt(npe) * sc.gain_spread * rng.normal())
-            v = sipm_pulse(t, at, amplitude, sc.rise, sc.decay)
-            for dark in rng.uniform(span[0], span[1], rng.poisson(sc.dark_rate * (t[-1] - t[0]))):
+            signal = sipm_pulse(t, at, amplitude, sc.rise, sc.decay)
+            v = signal.copy()
+            # Dark counts also start before the record, their tails reach into it.
+            window_start = first - 5 * sc.decay
+            n_dark = rng.poisson(sc.dark_rate * (last - window_start))
+            for dark in rng.uniform(window_start, last, n_dark):
                 amp = sc.pe_volts * (1 + sc.gain_spread * rng.normal())
                 v += sipm_pulse(t, dark, amp, sc.rise, sc.decay)
-            return sign * v, npe, at
+            return signal, v, npe, at
 
-        c2, self.npe_a, self.arrival_a = sipm(sc.arrival_a, sc.jitter_a, 1.0)
-        c3, self.npe_b, self.arrival_b = sipm(sc.arrival_b, sc.jitter_b, -1.0)
+        signal_a, c2, self.npe_a, self.arrival_a = sipm(sc.arrival_a, sc.jitter_a)
+        signal_b, c3, self.npe_b, self.arrival_b = sipm(sc.arrival_b, sc.jitter_b)
+        c3 = -c3
 
-        # C4: NIM logic pulse fired by the noiseless C2 crossing the discriminator level.
+        # C4: NIM logic pulse fired when the A signal crosses the discriminator level.
         c4 = np.zeros_like(t)
-        above = np.flatnonzero(c2 >= sc.discriminator)
+        above = np.flatnonzero(signal_a >= sc.discriminator)
         self.fired = above.size > 0
+        self.nim_start: float | None = None
         if self.fired:
-            start = t[above[0]] + sc.nim_delay + rng.normal(0, sc.nim_jitter)
-            c4 = -0.8 * (_edge(t, start, sc.edge_time) - _edge(t, start + sc.nim_width, sc.edge_time))
+            i = int(above[0])
+            crossing = t[i]
+            if i > 0:  # linear interpolation between the samples around the crossing
+                lo, hi = signal_a[i - 1], signal_a[i]
+                crossing = t[i - 1] + (sc.discriminator - lo) / (hi - lo) * sc.dt
+            self.nim_start = float(crossing + sc.nim_delay + rng.normal(0, sc.nim_jitter))
+            c4 = sc.nim_level * (
+                _edge(t, self.nim_start, sc.edge_time)
+                - _edge(t, self.nim_start + sc.nim_width, sc.edge_time)
+            )
 
         def noise(rms: float) -> np.ndarray:
             return rms * _band_limited(rng.normal(size=t.size), 0.35 / sc.bandwidth / sc.dt)
 
-        c1 += noise(0.02)
+        c1 += noise(sc.clock_noise)
         c2 += noise(sc.sipm_noise)
         c3 += noise(sc.sipm_noise)
-        c4 += noise(0.01)
+        c4 += noise(sc.nim_noise)
         self.volts = {"C1": c1, "C2": c2, "C3": c3, "C4": c4}
 
 
+def quantize(volts: np.ndarray, setup: ChannelSetup) -> tuple[np.ndarray, float]:
+    """8-bit codes of ``volts`` as the scope digitises them, and the volts per code (gain)."""
+    gain = float(np.float32(setup.volts_per_div / CODES_PER_DIV))
+    codes = np.clip(np.round((volts + setup.offset) / gain), CODE_MIN, CODE_MAX).astype(np.int8)
+    return codes, gain
+
+
+def acquisition_block(
+    acq: SyntheticAcquisition, channel: str, kind: str = "ALL", trigger_seconds: float = 0.0
+) -> bytes:
+    """The reply of ``Cn:WF? <kind>`` for ``acq``: SHORT header + definite-length block."""
+    sc = acq.scene
+    setup = sc.channels[channel]
+    codes, gain = quantize(acq.volts[channel], setup)
+    raw = build_wavedesc(
+        codes=codes,
+        gain=gain,
+        offset=setup.offset,
+        h_interval=sc.dt,
+        h_offset=sc.t0,
+        trigger_seconds=trigger_seconds,
+        source=CHANNEL_INDEX[channel],
+        header=f"{channel}:WF {kind},".encode(),
+    )
+    if kind == "DESC":  # descriptor only: drop the sample array, keep the block well-formed
+        start = raw.index(b"#") + 11
+        payload = raw[start : start + DESCRIPTOR_LENGTH]
+        raw = f"{channel}:WF DESC,#9{len(payload):09d}".encode() + payload + b"\n"
+    return raw
+
+
 class SyntheticScope:
-    """VISA-resource stand-in (write/read_raw/query/clear/close) producing synthetic signals."""
+    """VISA-resource stand-in (write/read_raw/query/clear/close) producing synthetic signals.
+
+    Like ``FakeVisaResource`` it records every written command in ``sent``; a command without
+    a reply times out. ``reset`` makes every write raise a socket reset (cable unplugged).
+    """
 
     def __init__(self, scene: Scene | None = None, rate_hz: float = 20.0, seed: int | None = None):
         self.scene = scene or Scene()
@@ -156,9 +232,13 @@ class SyntheticScope:
         self.rng = np.random.default_rng(seed)
         self.timeout = 3000
         self.closed = False
+        self.reset = False
         self.trigger_mode = "NORM"
+        self.sent: list[str] = []
+        self.cleared = 0
         self.acquisitions = 0
         self.current: SyntheticAcquisition | None = None
+        self._trigger_seconds = 0.0
         self._next_due = 0.0
         self._pending: bytes | None = None
 
@@ -197,41 +277,24 @@ class SyntheticScope:
         self._next_due = max(now, self._next_due) + 1 / self.rate_hz
         self.current = SyntheticAcquisition(self.scene, self.rng)
         self.acquisitions += 1
-
-    def _block(self, ch: str, kind: str) -> bytes:
-        sc = self.scene
-        setup = sc.channels[ch]
-        gain = setup.volts_per_div / CODES_PER_DIV
-        volts = self.current.volts[ch]
-        codes = np.clip(np.round((volts + setup.offset) / gain), -128, 127).astype(np.int8)
-        raw = build_wavedesc(
-            codes=codes,
-            gain=gain,
-            offset=setup.offset,
-            h_interval=sc.dt,
-            h_offset=sc.t0,
-            trigger_seconds=(self.acquisitions / self.rate_hz) % 60,
-            source=CHANNEL_INDEX[ch],
-            header=f"{ch}:WF {kind},".encode(),
-        )
-        if kind == "DESC":  # descriptor only: drop the sample array, keep the block well-formed
-            start = raw.index(b"#") + 11
-            payload = raw[start : start + 346]
-            raw = f"{ch}:WF DESC,#9{len(payload):09d}".encode() + payload + b"\n"
-        return raw
+        # One trigger time per acquisition, shared by all its channels, increasing with 1/rate.
+        self._trigger_seconds = self.acquisitions / self.rate_hz
 
     # --- VISA-like API ---------------------------------------------------------------------
     def write(self, command: str) -> None:
         if self.closed:
-            raise ConnectionResetError(10054, "synthetic scope closed")
+            raise VisaIOError(constants.StatusCode.error_connection_lost)
+        if self.reset:
+            raise ConnectionResetError(10054, "connection forcibly closed by the remote host")
+        self.sent.append(command)
         ch, _, rest = command.partition(":")
         if rest == "WF? DESC" and ch in CHANNEL_INDEX:
             self._acquire()
-            self._pending = self._block(ch, "DESC")
+            self._pending = acquisition_block(self.current, ch, "DESC", self._trigger_seconds)
         elif rest == "WF? ALL" and ch in CHANNEL_INDEX:
             if self.current is None:
                 self._acquire()
-            self._pending = self._block(ch, "ALL")
+            self._pending = acquisition_block(self.current, ch, "ALL", self._trigger_seconds)
         else:
             text = self._text(command)
             self._pending = None if text is None else (text + "\n").encode()
@@ -250,6 +313,7 @@ class SyntheticScope:
         return self.read()
 
     def clear(self) -> None:
+        self.cleared += 1
         self._pending = None
 
     def close(self) -> None:

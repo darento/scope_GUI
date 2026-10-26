@@ -139,6 +139,7 @@ class Waveform:
     dt: float
     trigger_time: float
     received_at: float
+    step: float = 0.0  # volts per digitiser code (descriptor VERTICAL_GAIN); 0 = unknown
 
     @property
     def times(self) -> np.ndarray:

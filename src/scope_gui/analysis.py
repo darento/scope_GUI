@@ -1,14 +1,15 @@
 """Measurements on the waveforms already received for display (no instrument I/O).
 
 Everything here is pure numpy: it works on the samples the GUI got from the worker, so measuring
-never sends anything to the scope.
+never sends anything to the scope (FR-020). Definitions: specs/002-waveform-analysis/data-model.md.
 
-Reference levels: for each channel and acquisition the *base* and *top* levels are estimated from
-the samples inside the gate. Square-like signals use the median of the samples below/above the
-mid-level; narrow pulses (fewer than ``PULSE_FRACTION`` of the samples away from the base, e.g.
-SiPM signals) use the peak as top. For negative pulses top is below base. Percent levels, rise/
-fall time, width, period and duty cycle are relative to these: 0 % = base, 100 % = top, and the
-*leading* edge goes from base to top whatever the polarity.
+Reference levels (research R2): per channel and acquisition the record is split at its mid-level.
+Square-like signals use the medians of the samples below/above it as base and top; narrow pulses
+(fewer than ``PULSE_FRACTION`` of the samples on one side, e.g. SiPM signals) use the baseline as
+base and the peak inside the gate as top, so for negative pulses top is below base. Base and noise
+always come from the whole record. Percent levels, rise/fall time, width, period and duty cycle
+are relative to these: 0 % = base, 100 % = top, and the *leading* edge goes from base to top
+whatever the polarity.
 """
 
 import math
@@ -18,13 +19,14 @@ from functools import cached_property
 
 import numpy as np
 
-from .models import Waveform
+from .models import CHANNELS, Waveform
 
 PULSE_FRACTION = 0.2  # fewer samples than this beyond the mid-level -> narrow pulses, top = peak
 HYSTERESIS = 0.05  # fraction of |top - base| a level must be re-armed by before it fires again
 NOISE_HYSTERESIS = 3.0  # ... and at least this many times the noise rms
 MIN_SNR = 5.0  # |top - base| below this many noise rms: no pulse, relative quantities missed
 HISTORY = 100_000  # values kept per measurement
+REFERENCE_SAMPLES = 100_000  # reference medians use at most this many evenly spaced samples (R1)
 FWHM_PER_SIGMA = 2 * math.sqrt(2 * math.log(2))
 
 
@@ -60,7 +62,7 @@ class Kind(Enum):
             Kind.FREQUENCY: "Hz",
             Kind.DUTY_CYCLE: "%",
             Kind.EDGE_COUNT: "",
-            Kind.AREA: "Vs",
+            Kind.AREA: "V·s",
         }.get(self, "V")
 
     @property
@@ -90,12 +92,18 @@ class Level:
     relative: bool = False
     edge: Edge = Edge.RISING
 
+    def __post_init__(self):
+        if not isinstance(self.edge, Edge):
+            raise ValueError(f"invalid edge {self.edge!r}")
+        if not math.isfinite(self.value) or (self.relative and not 0 <= self.value <= 1):
+            raise ValueError(f"invalid level {self.value!r}")
+
     def label(self) -> str:
         if self.relative:
             lead = "lead" if self.edge is Edge.RISING else "trail"
             return f"{lead} {self.value * 100:g}%"
         arrow = "↑" if self.edge is Edge.RISING else "↓"
-        return f"{arrow} {_si(self.value, 'V')}"
+        return f"{arrow} {si_format(self.value, 'V')}"
 
 
 @dataclass(frozen=True)
@@ -105,6 +113,15 @@ class MeasurementSpec:
     level: Level = field(default_factory=Level)
     source2: str = "C2"
     level2: Level = field(default_factory=Level)
+
+    def __post_init__(self):
+        if not isinstance(self.kind, Kind):
+            raise ValueError(f"invalid measurement type {self.kind!r}")
+        for source in (self.source, self.source2):
+            if source not in CHANNELS:
+                raise ValueError(f"invalid channel {source!r}")
+        if not (isinstance(self.level, Level) and isinstance(self.level2, Level)):
+            raise ValueError("invalid level")
 
     @property
     def name(self) -> str:
@@ -123,6 +140,8 @@ class MeasurementSpec:
 
     @classmethod
     def from_dict(cls, data: dict) -> "MeasurementSpec":
+        """Inverse of ``to_dict``; ValueError/KeyError (or TypeError) for invalid data."""
+
         def level(d: dict) -> Level:
             return Level(float(d["value"]), bool(d["relative"]), Edge[d["edge"]])
 
@@ -135,8 +154,10 @@ class MeasurementSpec:
         )
 
 
-def _si(value: float, unit: str) -> str:
-    """Compact engineering format for labels: 0.03 V -> "30 mV"."""
+def si_format(value: float, unit: str) -> str:
+    """Engineering format with 4 significant digits: 0.03 V -> "30 mV"; NaN -> "—"."""
+    if not math.isfinite(value):
+        return "—"
     if value == 0:
         return f"0 {unit}"
     prefixes = {-4: "p", -3: "n", -2: "µ", -1: "m", 0: "", 1: "k", 2: "M", 3: "G"}
@@ -166,6 +187,48 @@ def _rms(v: np.ndarray, centre: float) -> float:
     return 1.4826 * float(np.median(np.abs(v - centre)))
 
 
+def _baseline(v: np.ndarray) -> tuple[float, float]:
+    """(level, noise rms) of a flat level that pulse tails or edges may lean on.
+
+    The median alone is pulled towards the tails of pulses sitting among the samples (~2 mV for
+    a SiPM record); the most populated value (histogram mode) is not. The level is the median of
+    the samples within one noise rms of that mode, which is unbiased for symmetric noise.
+    """
+    level = float(np.median(v))
+    noise = _rms(v, level)
+    if noise > 0:
+        counts, edges = np.histogram(v, bins=40, range=(level - 5 * noise, level + 5 * noise))
+        peak = int(np.argmax(counts))
+        mode = float(edges[peak] + edges[peak + 1]) / 2
+        near = v[np.abs(v - mode) <= noise]
+        if near.size:
+            level = float(np.median(near))
+            noise = _rms(v, level)
+    return level, noise
+
+
+def reference_levels(volts: np.ndarray, step: float = 0.0) -> tuple[float, float, float, int]:
+    """(base, top, noise rms, polarity) of a whole record; polarity 0 = square-like.
+
+    The medians use at most ``REFERENCE_SAMPLES`` evenly spaced samples (research R1): the base
+    of a 2.5M-point record costs 2 ms instead of 41 ms and moves by less than a digitiser step.
+    The extremes use every sample, so a narrow pulse is never missed. The noise is a median
+    absolute deviation, so the tail of a pulse among the base samples does not inflate it, and
+    it is at least one digitiser ``step``: a flat record or a one-code wiggle is not a signal.
+    """
+    lo, hi = float(volts.min()), float(volts.max())
+    v = volts[:: -(-volts.size // REFERENCE_SAMPLES)]
+    upper = v >= (lo + hi) / 2
+    fraction = float(upper.mean())
+    if fraction < PULSE_FRACTION:  # mostly low: positive pulses
+        (base, noise), top, polarity = _baseline(v[~upper]), hi, 1
+    elif fraction > 1 - PULSE_FRACTION:  # mostly high: negative pulses (or flat)
+        (base, noise), top, polarity = _baseline(v[upper]), lo, -1
+    else:
+        (base, noise), (top, _), polarity = _baseline(v[~upper]), _baseline(v[upper]), 0
+    return base, top, max(noise, step), polarity
+
+
 class Trace:
     """One channel's samples inside the gate, with lazily computed reference levels.
 
@@ -182,6 +245,7 @@ class Trace:
             i0 = max(0, math.ceil((start - waveform.t0) / waveform.dt))
             i1 = min(n, math.floor((end - waveform.t0) / waveform.dt) + 1)
         self.record = waveform.volts
+        self.step = waveform.step
         self.v = waveform.volts[i0 : max(i0, i1)]
         self.t0 = waveform.t0 + i0 * waveform.dt
         self.dt = waveform.dt
@@ -192,23 +256,7 @@ class Trace:
 
     @cached_property
     def _reference(self) -> tuple[float, float, float, int]:
-        """(base, top, noise rms, polarity) of the whole record; polarity 0 = square-like.
-
-        The noise is a median absolute deviation, so the tail of a pulse sitting among the base
-        samples does not inflate it.
-        """
-        v = self.record
-        lo, hi = float(v.min()), float(v.max())
-        upper = v >= (lo + hi) / 2
-        fraction = float(upper.mean())
-        if fraction < PULSE_FRACTION:  # mostly low: positive pulses
-            base = float(np.median(v[~upper]))
-            return base, hi, _rms(v[~upper], base), 1
-        if fraction > 1 - PULSE_FRACTION:  # mostly high: negative pulses (or flat)
-            base = float(np.median(v[upper]))
-            return base, lo, _rms(v[upper], base), -1
-        base = float(np.median(v[~upper]))
-        return base, float(np.median(v[upper])), _rms(v[~upper], base), 0
+        return reference_levels(self.record, self.step)
 
     @cached_property
     def _levels(self) -> tuple[float, float, float]:

@@ -303,6 +303,7 @@ class ScopeDriver:
             dt=desc.horiz_interval,
             trigger_time=desc.trigger_time,
             received_at=time.monotonic(),
+            step=desc.vertical_gain,
         )
 
     # --- low level ---------------------------------------------------------------------------

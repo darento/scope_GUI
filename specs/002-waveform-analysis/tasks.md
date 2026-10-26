@@ -32,7 +32,7 @@ them reworks them to match the contracts and the task's tests.
 
 **Purpose**: Confirm the baseline; no new dependencies (research R15)
 
-- [ ] T001 Run `uv run pytest` (expect the 199 tests of feature 001 to pass) and
+- [X] T001 Run `uv run pytest` (expect the 199 tests of feature 001 to pass) and
   `uv run ruff check` / `uv run ruff format --check` on the branch before any change, so later
   failures are attributable; do not add dependencies to `pyproject.toml` (R15)
 
@@ -46,7 +46,7 @@ bench's demo set
 
 **⚠️ CRITICAL**: No user story work beyond US1 can begin until this phase is complete
 
-- [ ] T002 [P] Write the vocabulary part of `tests/unit/test_analysis.py` (contract guarantee 13):
+- [X] T002 [P] Write the vocabulary part of `tests/unit/test_analysis.py` (contract guarantee 13):
   every `Kind` has the unit and level count of the data-model.md table (`DELTA_T` s/2,
   `TIME_AT_LEVEL` s/1, `EDGE_COUNT` —/1, `AMPLITUDE`/`BASE`/`TOP`/`MAXIMUM`/`MINIMUM`/`PK_PK`/
   `MEAN` V/0, `AREA` V·s/0, `RISE_TIME`/`FALL_TIME`/`WIDTH`/`PERIOD` s/0, `FREQUENCY` Hz/0,
@@ -55,7 +55,7 @@ bench's demo set
   `to_dict`/`from_dict` round-trips every kind (enum *names* stored, not labels); `from_dict`
   raises `ValueError`/`KeyError` for an unknown kind, unknown edge, source outside
   `"C1"`…`"C4"` or missing field
-- [ ] T003 Implement the vocabulary in `src/scope_gui/analysis.py` per contracts/analysis.md and
+- [X] T003 Implement the vocabulary in `src/scope_gui/analysis.py` per contracts/analysis.md and
   data-model.md (pure numpy, no Qt/pyvisa/driver import): `Edge` (`RISING`, `FALLING`; for
   relative levels `RISING` = leading edge base → top whatever the polarity); `Kind` with `.unit`
   and `.levels`; frozen `Level(value: float, relative: bool = False, edge: Edge = Edge.RISING)`
@@ -82,11 +82,11 @@ photoelectron steps, empty acquisitions and dark counts (quickstart B1)
 
 > Write these tests first and make sure they fail before the implementation
 
-- [ ] T004 [P] [US1] Write `tests/integration/test_no_synthetic_in_app.py`: no file under
+- [X] T004 [P] [US1] Write `tests/integration/test_no_synthetic_in_app.py`: no file under
   `src/scope_gui/` contains `synthetic` (case-insensitive) or imports from `tests`; importing
   `scope_gui.__main__` does not import `synthetic_scope` (check `sys.modules`) — FR-001,
   Constitution I/IV
-- [ ] T005 [P] [US1] Write the scene part of `tests/integration/test_bench_accuracy.py` (fixed
+- [X] T005 [P] [US1] Write the scene part of `tests/integration/test_bench_accuracy.py` (fixed
   seeds, `SyntheticAcquisition` directly, no GUI): default `Scene` values equal data-model.md
   (10 MHz clock 0–2.5 V; SiPM A positive / B negative, Poisson mean 3, 20 mV per photoelectron,
   10 % gain spread, rise 1 ns, decay 30 ns, arrivals 35 / 37 ns, jitter 70 / 90 ps, dark rate
@@ -96,7 +96,7 @@ photoelectron steps, empty acquisitions and dark counts (quickstart B1)
   with `npe_a == 0` is e⁻³ ≈ 5 % ± 1.5 %; `fired` is false whenever `npe_a == 0` and C4 then stays at
   0 V; true arrival σ of `arrival_b − arrival_a` is √(70² + 90²) ≈ 114 ps ± 10 %; same seed →
   identical volts (FR-002, FR-003, US1-3)
-- [ ] T006 [P] [US1] Write the connection part of `tests/integration/test_bench_live.py`
+- [X] T006 [P] [US1] Write the connection part of `tests/integration/test_bench_live.py`
   (pytest-qt, `SyntheticScope` → `synthetic_factory` → real `ScopeDriver` → `MainWindow`,
   `driver.tcp_precheck` monkeypatched as in feature 001's tests, `rate_hz` high): Connect shows
   identity `SYNTHETIC` without the unsupported-model dialog; within 5 s all four curves are
@@ -107,7 +107,7 @@ photoelectron steps, empty acquisitions and dark counts (quickstart B1)
 
 ### Implementation for User Story 1
 
-- [ ] T007 [US1] Rework `tests/synthetic_scope.py` per data-model.md "Synthetic scene" and
+- [X] T007 [US1] Rework `tests/synthetic_scope.py` per data-model.md "Synthetic scene" and
   contracts/synthetic-bench.md: `Scene` dataclass with the defaults listed in T005 plus
   `points` (10,000), `trigger_delay`, `time_per_div` and `channels` (`ChannelSetup` V/div,
   offset, enabled, coupling); `SyntheticAcquisition(scene, rng)` with `volts` per channel and
@@ -123,7 +123,7 @@ photoelectron steps, empty acquisitions and dark counts (quickstart B1)
   acquisition), unknown commands → no reply → `fakes._timeout_error()`; attributes `scene`,
   `current`, `acquisitions`; `synthetic_factory(scope)` like `fakes.fake_factory`; changing
   `scene` between acquisitions changes the next status read (for FR-022 tests); make T005 pass
-- [ ] T008 [US1] Create `tests/bench.py` per contracts/synthetic-bench.md: argparse `--rate`
+- [X] T008 [US1] Create `tests/bench.py` per contracts/synthetic-bench.md: argparse `--rate`
   (20), `--points` (10000), `--seed`, `--mean-pe` (3); call
   `scope_gui.__main__.setup_logging()`; replace `scope_gui.settings._settings` in this process
   only with a `QSettings` INI file at `%LOCALAPPDATA%\scope_gui\bench.ini` (as

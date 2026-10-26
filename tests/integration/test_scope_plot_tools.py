@@ -294,3 +294,20 @@ def test_clear_empties_persistence(plot):
     assert plot.persistence.count == 0
     plot.set_waveforms({"C1": ramp("C1")})  # no status: nothing added
     assert plot.persistence.count == 0
+
+
+def test_long_records_are_drawn_downsampled(plot, qtbot):
+    """Peak downsampling and clipping really reach the curves (PlotItem.addItem resets them)."""
+    plot.set_status(make_status(enabled=("C1",)))
+    n = 1_000_000
+    t0, dt = -316e-9, 1e-6 / n
+    volts = np.sin(np.arange(n) * 1e-3).astype(np.float32)
+    plot.set_waveforms({"C1": Waveform("C1", volts, t0, dt, 0.0, 0.0)})
+    curve = plot.curves["C1"]
+    assert curve.opts["autoDownsample"] and curve.opts["downsampleMethod"] == "peak"
+    assert curve.opts["clipToView"]
+    shown = curve._getDisplayDataset()
+    assert len(shown.x) < 20 * plot.plot.vb.width()
+    assert np.nanmax(shown.y) == pytest.approx(
+        volts_to_div(volts.max(), make_status().channel("C1"))
+    )

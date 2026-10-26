@@ -51,7 +51,7 @@ def bench(qtbot):
 
 
 def curve(window, channel) -> np.ndarray:
-    return np.array(window.scope_plot.curves[channel].getData()[1])
+    return np.array(window.scope_plot.curves[channel].yData)  # full trace, not downsampled
 
 
 def connected_driver(scope: SyntheticScope) -> ScopeDriver:
@@ -97,7 +97,7 @@ def test_timebase_follows_the_scene(bench):
     scene = Scene(points=SMALL, time_per_div=100e-9, trigger_delay=-300e-9)
     window, scope = bench(scene)
     assert "100 ns/div" in window.side_panel.timebase_label.text()
-    times = window.scope_plot.curves["C1"].getData()[0]
+    times = window.scope_plot.curves["C1"].xData
     assert times[0] == pytest.approx(-200e-9)  # screen centre at +300 ns, 10 div of 100 ns
     assert times[-1] == pytest.approx(800e-9, rel=1e-3)
 
@@ -238,6 +238,7 @@ def test_pause_stops_statistics_histogram_and_persistence(bench, qtbot):
     plot = window.scope_plot
     qtbot.waitUntil(lambda: plot.persistence.count >= 2, timeout=5000)
     window.side_panel.pause_button.click()
+    qtbot.wait(20)  # the acquisition shown before pausing is still measured
     frozen = sizes(window)
     layers, histogram = plot.persistence.count, window.histogram_panel.stats_label.text()
     seen = scope.acquisitions

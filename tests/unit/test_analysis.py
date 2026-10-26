@@ -12,6 +12,7 @@ from scope_gui.analysis import (
     MeasurementSpec,
     RangeMode,
     Statistics,
+    crossing_indices,
     gauss_fit,
     histogram_range,
     measure_all,
@@ -526,3 +527,25 @@ def test_constant_empty_and_degenerate_ranges_are_not_empty():
 def test_auto_range_falls_back_to_min_max_when_the_mad_is_zero():
     values = np.concatenate([np.full(100, 1.0), [5.0, 9.0]])  # MAD = 0
     assert histogram_range(values, RangeMode.AUTO_ROBUST) == (1.0, 9.0)
+
+
+def _crossings_per_sample(v, level, hysteresis):
+    """Straightforward per-sample state machine (the original implementation)."""
+    state = np.zeros(v.size, np.int8)
+    state[v < level - hysteresis] = -1
+    state[v >= level] = 1
+    idx = np.flatnonzero(state)
+    s = state[idx]
+    return idx[1:][(s[1:] == 1) & (s[:-1] == -1)]
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_crossing_indices_match_the_per_sample_state_machine(seed):
+    rng = np.random.default_rng(seed)
+    v = np.cumsum(rng.normal(size=rng.integers(2, 3000))).astype(np.float32)
+    v[rng.random(v.size) < 0.01] = np.nan  # NaN is neither armed nor fired
+    level, hysteresis = float(rng.normal() * 5), float(rng.choice([0.0, 0.5, 3.0]))
+    expected = _crossings_per_sample(v, level, hysteresis)
+    np.testing.assert_array_equal(crossing_indices(v, level, hysteresis), expected)
+    falling = _crossings_per_sample(-v, -level, hysteresis)
+    np.testing.assert_array_equal(crossing_indices(v, level, hysteresis, rising=False), falling)

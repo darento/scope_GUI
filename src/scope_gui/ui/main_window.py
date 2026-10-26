@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMessageBox, QSplitter
 
@@ -47,6 +47,7 @@ class MainWindow(QMainWindow):
         self._pending_address = ""
         self._state = ConnectionState.DISCONNECTED
         self.view = LiveViewState()
+        self._to_measure: dict[str, Waveform] | None = None  # shown, measured next turn
         self._last_settings = None  # channel and acquisition settings of the last status
 
         self.connection_bar = ConnectionBar(address)
@@ -200,14 +201,28 @@ class MainWindow(QMainWindow):
             self.scope_plot.set_status(status)
 
     def _on_waveforms(self, waveforms: dict[str, Waveform]) -> None:
+        if self.view.paused:
+            self.worker.waveforms_consumed()
+            return
         try:
-            if self.view.paused:
-                return
             self.scope_plot.set_waveforms(waveforms)
-            # Every received channel is measured, also those hidden on the PC (FR-008).
-            self.measurements_panel.process(waveforms, self.scope_plot.gate())
             self.view.last_update = datetime.now()
             self._update_rate_label()
+        except BaseException:
+            self.worker.waveforms_consumed()
+            raise
+        # Measured in the next event-loop turn: input is handled between drawing and analysis,
+        # so neither stalls the window for long at 2.5M points (FR-021). The worker sends the
+        # next acquisition only after that, so every one shown is measured exactly once.
+        self._to_measure = waveforms
+        QTimer.singleShot(0, self._measure_shown)
+
+    def _measure_shown(self) -> None:
+        waveforms, self._to_measure = self._to_measure, None
+        try:
+            if waveforms is not None:
+                # Every received channel is measured, also those hidden on the PC (FR-008).
+                self.measurements_panel.process(waveforms, self.scope_plot.gate())
         finally:
             self.worker.waveforms_consumed()
 

@@ -43,7 +43,7 @@ def all_waveforms(**kwargs) -> dict[str, Waveform]:
 
 
 def point_count(curve) -> int:
-    x, _ = curve.getData()
+    x = curve.xData  # the full trace (getData() is downsampled)
     return 0 if x is None else len(x)
 
 
@@ -115,10 +115,11 @@ def test_curve_data_is_in_divisions(plot):
     waveforms = all_waveforms()
     plot.set_waveforms(waveforms)
     for name in ("C1", "C3"):
-        x, y = plot.curves[name].getData()
-        assert x is not None
-        np.testing.assert_allclose(y, volts_to_div(waveforms[name].volts, status.channel(name)))
-        np.testing.assert_allclose(plot.curves[name].xData, waveforms[name].times)
+        curve = plot.curves[name]  # xData/yData: the full trace (getData() is downsampled)
+        np.testing.assert_allclose(
+            curve.yData, volts_to_div(waveforms[name].volts, status.channel(name))
+        )
+        np.testing.assert_allclose(curve.xData, waveforms[name].times)
 
 
 def test_missing_channel_keeps_old_data(plot):

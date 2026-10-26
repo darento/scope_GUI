@@ -129,8 +129,8 @@ class MeasurementsPanel(QWidget):
         self.table.verticalHeader().hide()
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for column in range(1, len(COLUMNS)):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        # Value columns are fitted once per update (_refresh_rows), not by ResizeToContents,
+        # which re-measures every row after every cell change (~0.3 ms a cell).
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -180,7 +180,7 @@ class MeasurementsPanel(QWidget):
         self.specs[row] = spec
         self.stats[row] = Statistics()
         self._save()
-        self._refresh_row(row)
+        self._refresh_rows([row])
         self.selection_changed.emit()
         self.processed.emit()
 
@@ -224,8 +224,7 @@ class MeasurementsPanel(QWidget):
         for stats, value in zip(self.stats, values, strict=True):
             stats.add(value)
         self.trigger_log.add(first.trigger_time)
-        for row in range(len(self.specs)):
-            self._refresh_row(row)
+        self._refresh_rows()
         self.processed.emit()
 
     def clear_statistics(self) -> None:
@@ -233,8 +232,7 @@ class MeasurementsPanel(QWidget):
             stats.clear()
         self.trigger_log.clear()
         self.settings_note.hide()
-        for row in range(len(self.specs)):
-            self._refresh_row(row)
+        self._refresh_rows()
         self.processed.emit()
 
     def set_settings_changed(self) -> None:
@@ -299,15 +297,25 @@ class MeasurementsPanel(QWidget):
                 if column:
                     item.setTextAlignment(_RIGHT)
                 self.table.setItem(row, column, item)
-            self._refresh_row(row)
+        self._refresh_rows()
         self.table.blockSignals(False)
         self._update_buttons()
 
-    def _refresh_row(self, row: int) -> None:
+    def _refresh_rows(self, rows=None) -> None:
+        """Set the cells whose text changed, then fit the value columns."""
+        for row in range(len(self.specs)) if rows is None else rows:
+            for column, text in enumerate(self._row_texts(row)):
+                item = self.table.item(row, column)
+                if item.text() != text:
+                    item.setText(text)
+        for column in range(1, len(COLUMNS)):
+            self.table.resizeColumnToContents(column)
+
+    def _row_texts(self, row: int) -> tuple[str, ...]:
         spec = self.specs[row]
         s = self.stats[row].summary()
         unit = spec.kind.unit
-        texts = (
+        return (
             spec.name,
             format_value(s.last, unit),
             format_value(s.mean, unit),
@@ -317,8 +325,6 @@ class MeasurementsPanel(QWidget):
             str(s.count),
             str(s.missed),
         )
-        for column, text in enumerate(texts):
-            self.table.item(row, column).setText(text)
 
     def cell_text(self, row: int, column: str) -> str:
         return self.table.item(row, COLUMNS.index(column)).text()

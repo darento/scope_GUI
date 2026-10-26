@@ -172,18 +172,33 @@ def si_format(value: float, unit: str) -> str:
 # --- crossings -------------------------------------------------------------------------------
 
 
-def rising_indices(v: np.ndarray, level: float, hysteresis: float = 0.0) -> np.ndarray:
-    """Indices ``j`` where ``v`` crosses ``level`` upwards between ``j - 1`` and ``j``.
+def crossing_indices(
+    v: np.ndarray, level: float, hysteresis: float = 0.0, rising: bool = True
+) -> np.ndarray:
+    """Indices ``j`` where ``v`` crosses ``level`` (upwards, or downwards if not ``rising``)
+    between ``j - 1`` and ``j``.
 
-    A crossing counts only after the signal was below ``level - hysteresis`` (re-armed), so
-    noise riding on the level does not fire it again.
+    A crossing counts only after the signal was beyond ``level -/+ hysteresis`` (re-armed), so
+    noise riding on the level does not fire it again. Works on the few transitions of the two
+    thresholds, not on every sample: 2.5M points cost a handful of boolean passes (research R1).
     """
-    state = np.zeros(v.size, np.int8)
-    state[v < level - hysteresis] = -1
-    state[v >= level] = 1
-    idx = np.flatnonzero(state)
-    s = state[idx]
-    return idx[1:][(s[1:] == 1) & (s[:-1] == -1)]
+    if rising:
+        fired, armed = v >= level, v < level - hysteresis
+    else:
+        fired, armed = v <= level, v > level + hysteresis
+    fires = np.flatnonzero(fired[1:] & ~fired[:-1]) + 1
+    if not fires.size:
+        return fires
+    leaves = np.flatnonzero(~fired[1:] & fired[:-1]) + 1  # where the level was left again
+    arms = np.flatnonzero(armed[1:] & ~armed[:-1]) + 1
+    if armed[0]:
+        arms = np.concatenate(([0], arms))
+    # Since the level was last left (or the record start), was the signal re-armed?
+    k = np.searchsorted(leaves, fires, side="right") - 1
+    since = np.zeros_like(fires)
+    since[k >= 0] = leaves[k[k >= 0]]
+    rearmed = np.searchsorted(arms, fires) > np.searchsorted(arms, since)
+    return fires[rearmed]
 
 
 def _rms(v: np.ndarray, centre: float) -> float:
@@ -253,6 +268,7 @@ class Trace:
         self.v = waveform.volts[i0 : max(i0, i1)]
         self.t0 = waveform.t0 + i0 * waveform.dt
         self.dt = waveform.dt
+        self._crossings: dict[tuple[float, bool, float], np.ndarray] = {}
 
     @property
     def empty(self) -> bool:
@@ -298,12 +314,14 @@ class Trace:
             rising = (level.edge is Edge.RISING) == (top >= base)
         else:
             volts, rising = level.value, level.edge is Edge.RISING
-        v = self.v if rising else -self.v
-        target = volts if rising else -volts
-        j = rising_indices(v, target, hysteresis)
-        before, after = v[j - 1], v[j]
-        fraction = (target - before) / (after - before)
-        return self.t0 + (j - 1 + fraction) * self.dt
+        key = (volts, rising, hysteresis)  # several measurements often share a crossing
+        if key not in self._crossings:
+            v = self.v
+            j = crossing_indices(v, volts, hysteresis, rising)
+            before, after = v[j - 1].astype(np.float64), v[j].astype(np.float64)
+            fraction = (volts - before) / (after - before)
+            self._crossings[key] = self.t0 + (j - 1 + fraction) * self.dt
+        return self._crossings[key]
 
     def first_crossing(self, level: Level) -> float:
         times = self.crossings(level)

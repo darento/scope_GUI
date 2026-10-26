@@ -407,3 +407,22 @@ def test_histogram_dock_follows_the_selected_measurement(window, qtbot):
     panel.table.selectRow(0)
     assert histogram._selected == 0
     assert histogram.stats_label.text().startswith("N 5 · outside 0")
+
+
+def test_shown_acquisition_is_measured_in_the_next_event_loop_turn(window, qtbot):
+    """Drawing and analysis are separate turns, and the worker is released only after both."""
+    from test_scope_plot import make_status, make_waveform
+
+    released = []
+    window.worker.waveforms_consumed = lambda: released.append(True)
+    window.scope_plot.set_status(make_status())
+    window.measurements_panel.add(MAX_C1)
+    window._on_waveforms({"C1": make_waveform("C1")})
+    assert window.measurements_panel.stats[0].summary().count == 0 and released == []
+    qtbot.waitUntil(lambda: released == [True], timeout=1000)
+    assert window.measurements_panel.stats[0].summary().count == 1
+    window.side_panel.pause_button.click()
+    window._on_waveforms({"C1": make_waveform("C1")})  # paused: released at once, not measured
+    assert released == [True, True]
+    qtbot.wait(20)
+    assert window.measurements_panel.stats[0].summary().count == 1

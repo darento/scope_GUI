@@ -59,6 +59,8 @@ class ScopePlot(QWidget):
         super().__init__(parent)
         self._status: ScopeStatus | None = None
         self._waveforms: dict[str, Waveform] = {}
+        self._ramp_key: tuple[int, float] | None = None  # (points, dt) of self._ramp
+        self._ramp = np.empty(0)  # i * dt; the trace times are t0 + this
         self._hidden: set[str] = set()
         self._stale = False
         self._grid_x: tuple[float, float, float] | None = None
@@ -72,6 +74,10 @@ class ScopePlot(QWidget):
         self.plot: pg.PlotItem = self.plot_widget.getPlotItem()
         self.plot.setMenuEnabled(False)
         self.plot.hideButtons()
+        # Set on the PlotItem: its addItem() overwrites a curve's own downsampling and clipping.
+        # Peak downsampling draws ~5 points per pixel (2.5M-point traces: ~1 s -> ~0.1 s a frame).
+        self.plot.setDownsampling(auto=True, mode="peak")
+        self.plot.setClipToView(True)
         # Left-drag: box zoom; wheel: zoom; middle-drag: pan (FR-014). No context menu: its
         # options would fight with the scope mirror.
         self.plot.setMouseEnabled(True, True)
@@ -95,8 +101,6 @@ class ScopePlot(QWidget):
         self.curves: dict[str, pg.PlotDataItem] = {}
         for name in CHANNELS:
             curve = pg.PlotDataItem(pen=pg.mkPen(CHANNEL_COLORS[name]))
-            curve.setDownsampling(auto=True, method="peak")
-            curve.setClipToView(True)
             curve.setVisible(False)
             self.plot.addItem(curve, ignoreBounds=True)
             self.curves[name] = curve
@@ -465,7 +469,15 @@ class ScopePlot(QWidget):
         if waveform is None or self._status is None:
             return
         y = volts_to_div(waveform.volts, self._status.channel(name))
-        self.curves[name].setData(waveform.times, y, skipFiniteCheck=True)
+        self.curves[name].setData(self._times(waveform), y, skipFiniteCheck=True)
+
+    def _times(self, waveform: Waveform) -> np.ndarray:
+        """``waveform.times`` in one pass: i * dt is kept while the timebase stays the same."""
+        key = (waveform.volts.size, waveform.dt)
+        if key != self._ramp_key:
+            self._ramp_key = key
+            self._ramp = np.arange(key[0]) * key[1]
+        return self._ramp + waveform.t0
 
     def _refresh_visibility(self) -> None:
         for name, curve in self.curves.items():

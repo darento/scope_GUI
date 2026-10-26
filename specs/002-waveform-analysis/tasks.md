@@ -414,12 +414,12 @@ three names, empty cells where missed (quickstart B11)
   persistence, export); the synthetic bench as a developer tool
   (`uv run python tests/bench.py`, options, separate `bench.ini`), stating it is not a mode of
   the application; link to `specs/002-waveform-analysis/quickstart.md`
-- [ ] T039 Measure `measure_all` with 10 measurements and persistence at 10k / 100k / 2.5M × 4
+- [X] T039 Measure `measure_all` with 10 measurements and persistence at 10k / 100k / 2.5M × 4
   channels on this PC; confirm ≤ 10 ms and ≤ 40 ms at 100k (plan Performance Goals) and a
   total GUI-thread time per acquisition (analysis + persistence + drawing) ≤ 0.2 s at 2.5M
   (FR-021, Principle II); if 2.5M exceeds it, profile and reduce before continuing; record
   the numbers in `specs/002-waveform-analysis/checklists/validation.md`
-- [ ] T040 Run `uv run ruff check --fix` and `uv run ruff format`; fix remaining issues in
+- [X] T040 Run `uv run ruff check --fix` and `uv run ruff format`; fix remaining issues in
   `src/` and `tests/`
 - [ ] T041 Run `uv run pytest` over `tests/` (must pass with no scope) and `uv run pytest -m hardware`
   against the real scope; fix failures

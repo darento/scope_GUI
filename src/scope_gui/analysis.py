@@ -1,0 +1,488 @@
+"""Measurements on the waveforms already received for display (no instrument I/O).
+
+Everything here is pure numpy: it works on the samples the GUI got from the worker, so measuring
+never sends anything to the scope.
+
+Reference levels: for each channel and acquisition the *base* and *top* levels are estimated from
+the samples inside the gate. Square-like signals use the median of the samples below/above the
+mid-level; narrow pulses (fewer than ``PULSE_FRACTION`` of the samples away from the base, e.g.
+SiPM signals) use the peak as top. For negative pulses top is below base. Percent levels, rise/
+fall time, width, period and duty cycle are relative to these: 0 % = base, 100 % = top, and the
+*leading* edge goes from base to top whatever the polarity.
+"""
+
+import math
+from dataclasses import asdict, dataclass, field
+from enum import Enum
+from functools import cached_property
+
+import numpy as np
+
+from .models import Waveform
+
+PULSE_FRACTION = 0.2  # fewer samples than this beyond the mid-level -> narrow pulses, top = peak
+HYSTERESIS = 0.05  # fraction of |top - base| a level must be re-armed by before it fires again
+NOISE_HYSTERESIS = 3.0  # ... and at least this many times the noise rms
+MIN_SNR = 5.0  # |top - base| below this many noise rms: no pulse, relative quantities missed
+HISTORY = 100_000  # values kept per measurement
+FWHM_PER_SIGMA = 2 * math.sqrt(2 * math.log(2))
+
+
+class Edge(Enum):
+    RISING = "Rising"
+    FALLING = "Falling"
+
+
+class Kind(Enum):
+    DELTA_T = "Δt @ level"
+    TIME_AT_LEVEL = "Time @ level"
+    EDGE_COUNT = "Edge count @ level"
+    AMPLITUDE = "Amplitude"
+    BASE = "Base"
+    TOP = "Top"
+    MAXIMUM = "Maximum"
+    MINIMUM = "Minimum"
+    PK_PK = "Pk-Pk"
+    MEAN = "Mean"
+    AREA = "Area"
+    RISE_TIME = "Rise time 10-90%"
+    FALL_TIME = "Fall time 90-10%"
+    WIDTH = "Width @ 50%"
+    PERIOD = "Period"
+    FREQUENCY = "Frequency"
+    DUTY_CYCLE = "Duty cycle"
+
+    @property
+    def unit(self) -> str:
+        if self in _TIME_KINDS:
+            return "s"
+        return {
+            Kind.FREQUENCY: "Hz",
+            Kind.DUTY_CYCLE: "%",
+            Kind.EDGE_COUNT: "",
+            Kind.AREA: "Vs",
+        }.get(self, "V")
+
+    @property
+    def levels(self) -> int:
+        """Number of user-set levels the measurement needs (0, 1 or 2)."""
+        return {Kind.DELTA_T: 2, Kind.TIME_AT_LEVEL: 1, Kind.EDGE_COUNT: 1}.get(self, 0)
+
+
+_TIME_KINDS = {
+    Kind.DELTA_T,
+    Kind.TIME_AT_LEVEL,
+    Kind.RISE_TIME,
+    Kind.FALL_TIME,
+    Kind.WIDTH,
+    Kind.PERIOD,
+}
+
+
+@dataclass(frozen=True)
+class Level:
+    """A threshold: volts, or a fraction (0-1) of base->top when ``relative`` (constant fraction).
+
+    For relative levels RISING means the leading edge (base -> top) whatever the polarity.
+    """
+
+    value: float = 0.0
+    relative: bool = False
+    edge: Edge = Edge.RISING
+
+    def label(self) -> str:
+        if self.relative:
+            lead = "lead" if self.edge is Edge.RISING else "trail"
+            return f"{lead} {self.value * 100:g}%"
+        arrow = "↑" if self.edge is Edge.RISING else "↓"
+        return f"{arrow} {_si(self.value, 'V')}"
+
+
+@dataclass(frozen=True)
+class MeasurementSpec:
+    kind: Kind
+    source: str
+    level: Level = field(default_factory=Level)
+    source2: str = "C2"
+    level2: Level = field(default_factory=Level)
+
+    @property
+    def name(self) -> str:
+        if self.kind is Kind.DELTA_T:
+            return f"Δt {self.source} {self.level.label()} → {self.source2} {self.level2.label()}"
+        if self.kind.levels:
+            return f"{self.kind.value.removesuffix(' @ level')} {self.source} {self.level.label()}"
+        return f"{self.kind.value} {self.source}"
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["kind"] = self.kind.name
+        for key in ("level", "level2"):
+            data[key]["edge"] = data[key]["edge"].name
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "MeasurementSpec":
+        def level(d: dict) -> Level:
+            return Level(float(d["value"]), bool(d["relative"]), Edge[d["edge"]])
+
+        return cls(
+            Kind[data["kind"]],
+            data["source"],
+            level(data["level"]),
+            data["source2"],
+            level(data["level2"]),
+        )
+
+
+def _si(value: float, unit: str) -> str:
+    """Compact engineering format for labels: 0.03 V -> "30 mV"."""
+    if value == 0:
+        return f"0 {unit}"
+    prefixes = {-4: "p", -3: "n", -2: "µ", -1: "m", 0: "", 1: "k", 2: "M", 3: "G"}
+    power = max(-4, min(3, math.floor(math.log10(abs(value)) / 3)))
+    return f"{value / 1000**power:.4g} {prefixes[power]}{unit}"
+
+
+# --- crossings -------------------------------------------------------------------------------
+
+
+def rising_indices(v: np.ndarray, level: float, hysteresis: float = 0.0) -> np.ndarray:
+    """Indices ``j`` where ``v`` crosses ``level`` upwards between ``j - 1`` and ``j``.
+
+    A crossing counts only after the signal was below ``level - hysteresis`` (re-armed), so
+    noise riding on the level does not fire it again.
+    """
+    state = np.zeros(v.size, np.int8)
+    state[v < level - hysteresis] = -1
+    state[v >= level] = 1
+    idx = np.flatnonzero(state)
+    s = state[idx]
+    return idx[1:][(s[1:] == 1) & (s[:-1] == -1)]
+
+
+def _rms(v: np.ndarray, centre: float) -> float:
+    """Robust noise rms: 1.4826 x median absolute deviation (equals the rms for Gaussian noise)."""
+    return 1.4826 * float(np.median(np.abs(v - centre)))
+
+
+class Trace:
+    """One channel's samples inside the gate, with lazily computed reference levels.
+
+    Base and noise always come from the whole record: a gate drawn tightly around a pulse would
+    otherwise be mostly pulse and give a wrong base. The gate only limits where crossings and
+    the peak are searched and which samples are measured.
+    """
+
+    def __init__(self, waveform: Waveform, gate: tuple[float, float] | None = None):
+        n = waveform.volts.size
+        i0, i1 = 0, n
+        if gate is not None and waveform.dt > 0:
+            start, end = sorted(gate)
+            i0 = max(0, math.ceil((start - waveform.t0) / waveform.dt))
+            i1 = min(n, math.floor((end - waveform.t0) / waveform.dt) + 1)
+        self.record = waveform.volts
+        self.v = waveform.volts[i0 : max(i0, i1)]
+        self.t0 = waveform.t0 + i0 * waveform.dt
+        self.dt = waveform.dt
+
+    @property
+    def empty(self) -> bool:
+        return self.v.size < 2
+
+    @cached_property
+    def _reference(self) -> tuple[float, float, float, int]:
+        """(base, top, noise rms, polarity) of the whole record; polarity 0 = square-like.
+
+        The noise is a median absolute deviation, so the tail of a pulse sitting among the base
+        samples does not inflate it.
+        """
+        v = self.record
+        lo, hi = float(v.min()), float(v.max())
+        upper = v >= (lo + hi) / 2
+        fraction = float(upper.mean())
+        if fraction < PULSE_FRACTION:  # mostly low: positive pulses
+            base = float(np.median(v[~upper]))
+            return base, hi, _rms(v[~upper], base), 1
+        if fraction > 1 - PULSE_FRACTION:  # mostly high: negative pulses (or flat)
+            base = float(np.median(v[upper]))
+            return base, lo, _rms(v[upper], base), -1
+        base = float(np.median(v[~upper]))
+        return base, float(np.median(v[upper])), _rms(v[~upper], base), 0
+
+    @cached_property
+    def _levels(self) -> tuple[float, float, float]:
+        """(base, top, noise rms); for pulses top is the peak inside the gate."""
+        base, top, noise, polarity = self._reference
+        if polarity > 0:
+            top = float(self.v.max())
+        elif polarity < 0:
+            top = float(self.v.min())
+        return base, top, noise
+
+    @property
+    def base_top(self) -> tuple[float, float]:
+        return self._levels[:2]
+
+    @property
+    def amplitude(self) -> float:
+        base, top = self.base_top
+        return top - base
+
+    @property
+    def has_pulse(self) -> bool:
+        """The signal stands out of its noise, so percentages of its amplitude mean something."""
+        base, top, noise = self._levels
+        return abs(top - base) > MIN_SNR * noise
+
+    def crossings(self, level: Level) -> np.ndarray:
+        """Interpolated times of every crossing of ``level`` (s, relative to the trigger)."""
+        base, top, noise = self._levels
+        hysteresis = max(HYSTERESIS * abs(top - base), NOISE_HYSTERESIS * noise)
+        if level.relative:
+            if not self.has_pulse:
+                return np.empty(0)
+            volts = base + level.value * (top - base)
+            rising = (level.edge is Edge.RISING) == (top >= base)
+        else:
+            volts, rising = level.value, level.edge is Edge.RISING
+        v = self.v if rising else -self.v
+        target = volts if rising else -volts
+        j = rising_indices(v, target, hysteresis)
+        before, after = v[j - 1], v[j]
+        fraction = (target - before) / (after - before)
+        return self.t0 + (j - 1 + fraction) * self.dt
+
+    def first_crossing(self, level: Level) -> float:
+        times = self.crossings(level)
+        return float(times[0]) if times.size else math.nan
+
+    def leading(self, fraction: float) -> np.ndarray:
+        return self.crossings(Level(fraction, True, Edge.RISING))
+
+    def trailing(self, fraction: float) -> np.ndarray:
+        return self.crossings(Level(fraction, True, Edge.FALLING))
+
+
+def _first_after(times: np.ndarray, t: float) -> float:
+    later = times[times > t]
+    return float(later[0]) if later.size else math.nan
+
+
+def _rise_time(tr: Trace) -> float:
+    """First complete leading edge: the 90 % crossing and the last 10 % crossing before it."""
+    t90, t10 = tr.leading(0.9), tr.leading(0.1)
+    before = np.searchsorted(t10, t90) - 1
+    ok = np.flatnonzero(before >= 0)
+    if not ok.size:
+        return math.nan
+    k = ok[0]
+    return float(t90[k] - t10[before[k]])
+
+
+def _fall_time(tr: Trace) -> float:
+    t90 = tr.trailing(0.9)
+    if not t90.size:
+        return math.nan
+    return _first_after(tr.trailing(0.1), t90[0]) - float(t90[0])
+
+
+def _width(tr: Trace) -> float:
+    lead = tr.leading(0.5)
+    if not lead.size:
+        return math.nan
+    return _first_after(tr.trailing(0.5), lead[0]) - float(lead[0])
+
+
+def _period(tr: Trace) -> float:
+    lead = tr.leading(0.5)
+    if lead.size < 2:
+        return math.nan
+    return float(lead[-1] - lead[0]) / (lead.size - 1)
+
+
+def _duty_cycle(tr: Trace) -> float:
+    lead, trail = tr.leading(0.5), tr.trailing(0.5)
+    if lead.size < 2 or not trail.size:
+        return math.nan
+    nxt = np.searchsorted(trail, lead[:-1])
+    ok = nxt < trail.size
+    ends = trail[np.minimum(nxt, trail.size - 1)]
+    ok &= ends < lead[1:]
+    if not ok.any():
+        return math.nan
+    widths = ends[ok] - lead[:-1][ok]
+    return 100 * float(widths.mean()) / _period(tr)
+
+
+def measure(spec: MeasurementSpec, traces: dict[str, Trace]) -> float:
+    """Value of one measurement for one acquisition, or NaN when it cannot be made."""
+    tr = traces.get(spec.source)
+    if tr is None or tr.empty:
+        return math.nan
+    kind = spec.kind
+    if kind is Kind.DELTA_T:
+        other = traces.get(spec.source2)
+        if other is None or other.empty:
+            return math.nan
+        return other.first_crossing(spec.level2) - tr.first_crossing(spec.level)
+    if kind is Kind.TIME_AT_LEVEL:
+        return tr.first_crossing(spec.level)
+    if kind is Kind.EDGE_COUNT:
+        return float(tr.crossings(spec.level).size)
+    if kind is Kind.AMPLITUDE:
+        return tr.amplitude
+    if kind is Kind.BASE:
+        return tr.base_top[0]
+    if kind is Kind.TOP:
+        return tr.base_top[1]
+    if kind is Kind.MAXIMUM:
+        return float(tr.v.max())
+    if kind is Kind.MINIMUM:
+        return float(tr.v.min())
+    if kind is Kind.PK_PK:
+        return float(tr.v.max() - tr.v.min())
+    if kind is Kind.MEAN:
+        return float(tr.v.mean(dtype=np.float64))
+    if kind is Kind.AREA:
+        base = tr.base_top[0]
+        return (float(tr.v.sum(dtype=np.float64)) - base * tr.v.size) * tr.dt
+    if kind is Kind.RISE_TIME:
+        return _rise_time(tr)
+    if kind is Kind.FALL_TIME:
+        return _fall_time(tr)
+    if kind is Kind.WIDTH:
+        return _width(tr)
+    if kind is Kind.PERIOD:
+        return _period(tr)
+    if kind is Kind.FREQUENCY:
+        return 1 / _period(tr)
+    if kind is Kind.DUTY_CYCLE:
+        return _duty_cycle(tr)
+    raise ValueError(f"unknown measurement {kind}")
+
+
+def measure_all(
+    specs: list[MeasurementSpec],
+    waveforms: dict[str, Waveform],
+    gate: tuple[float, float] | None = None,
+) -> list[float]:
+    """Values of all measurements for one acquisition; reference levels are computed once."""
+    traces = {name: Trace(wf, gate) for name, wf in waveforms.items()}
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return [measure(spec, traces) for spec in specs]
+
+
+# --- statistics ------------------------------------------------------------------------------
+
+
+class Statistics:
+    """Last ``HISTORY`` values of one measurement, one per acquisition (NaN = not measured)."""
+
+    def __init__(self, capacity: int = HISTORY):
+        self._buffer = np.full(capacity, np.nan)
+        self._next = 0
+        self._size = 0
+
+    def add(self, value: float) -> None:
+        self._buffer[self._next] = value
+        self._next = (self._next + 1) % self._buffer.size
+        self._size = min(self._size + 1, self._buffer.size)
+
+    def clear(self) -> None:
+        self._next = self._size = 0
+
+    @property
+    def size(self) -> int:
+        """Acquisitions recorded, measured or not."""
+        return self._size
+
+    def history(self) -> np.ndarray:
+        """All recorded values, oldest first, NaN where the measurement failed."""
+        if self._size < self._buffer.size:
+            return self._buffer[: self._size].copy()
+        return np.concatenate([self._buffer[self._next :], self._buffer[: self._next]])
+
+    def values(self) -> np.ndarray:
+        h = self.history()
+        return h[np.isfinite(h)]
+
+    @property
+    def last(self) -> float:
+        return float(self._buffer[self._next - 1]) if self._size else math.nan
+
+    def summary(self) -> "Summary":
+        values = self.values()
+        if not values.size:
+            return Summary(self.last, math.nan, math.nan, math.nan, math.nan, 0, self._size)
+        return Summary(
+            last=self.last,
+            mean=float(values.mean()),
+            std=float(values.std(ddof=1)) if values.size > 1 else 0.0,
+            minimum=float(values.min()),
+            maximum=float(values.max()),
+            count=values.size,
+            missed=self._size - values.size,
+        )
+
+
+@dataclass(frozen=True)
+class Summary:
+    last: float
+    mean: float
+    std: float
+    minimum: float
+    maximum: float
+    count: int
+    missed: int
+
+
+@dataclass(frozen=True)
+class GaussFit:
+    mean: float
+    sigma: float
+    amplitude: float  # counts at the peak
+
+    @property
+    def fwhm(self) -> float:
+        return FWHM_PER_SIGMA * self.sigma
+
+    def __call__(self, x):
+        return self.amplitude * np.exp(-0.5 * ((x - self.mean) / self.sigma) ** 2)
+
+
+def gauss_fit(centers: np.ndarray, counts: np.ndarray, iterations: int = 4) -> GaussFit | None:
+    """Gaussian fitted to the highest peak of a histogram (parabola on log counts, ±2 σ window).
+
+    Refitting within ±2 σ of the previous estimate makes it follow the main peak and ignore
+    tails or neighbouring peaks (e.g. one photoelectron peak of a SiPM spectrum).
+    """
+    counts = np.asarray(counts, dtype=float)
+    if centers.size < 3 or counts.sum() < 10:
+        return None
+    width = float(centers[1] - centers[0])
+    peak = int(np.argmax(counts))
+    mean = float(centers[peak])
+    # Start from the half-maximum width around the highest bin, not the overall spread, so a
+    # neighbouring peak does not widen the first window.
+    half = counts < counts[peak] / 2
+    left = peak - (np.flatnonzero(half[:peak][::-1])[:1].tolist() or [peak])[0]
+    right = peak + (np.flatnonzero(half[peak:])[:1].tolist() or [counts.size - peak])[0]
+    sigma = max(width, (right - left) * width / FWHM_PER_SIGMA)
+    fit = None
+    for _ in range(iterations):
+        window = (np.abs(centers - mean) <= 2 * sigma) & (counts > 0)
+        if window.sum() < 3:
+            # Peak narrower than the window can resolve: widen to the neighbouring bins.
+            window = (np.abs(centers - mean) <= 2 * width) & (counts > 0)
+            if window.sum() < 3:
+                return fit
+        x = (centers[window] - mean) / width
+        y = counts[window]
+        a, b, c = np.polyfit(x, np.log(y), 2, w=np.sqrt(y))
+        if a >= 0:
+            return fit
+        mean = mean + width * (-b / (2 * a))
+        sigma = width * math.sqrt(-1 / (2 * a))
+        fit = GaussFit(mean, sigma, float(math.exp(c - b * b / (4 * a))))
+    return fit

@@ -564,42 +564,64 @@ class GaussFit:
         return self.amplitude * np.exp(-0.5 * ((x - self.mean) / self.sigma) ** 2)
 
 
-def gauss_fit(centers: np.ndarray, counts: np.ndarray, iterations: int = 4) -> GaussFit | None:
-    """Gaussian fitted to the highest peak of a histogram (parabola on log counts, ±2 σ window).
+def gauss_fit(centers: np.ndarray, counts: np.ndarray, iterations: int = 50) -> GaussFit | None:
+    """Gaussian fitted to the highest peak of a histogram.
 
-    Refitting within ±2 σ of the previous estimate makes it follow the main peak and ignore
-    tails or neighbouring peaks (e.g. one photoelectron peak of a SiPM spectrum).
+    Start: the highest peak and its half-maximum width in the histogram smoothed just enough to
+    hold ~50 counts around the peak (in a sparse histogram the highest bin is mostly noise).
+    Then refined with the moments of the counts within ±2 σ of the current estimate, corrected
+    for that cut and for the bin width: unlike a parabola on log counts it is not thrown by empty
+    or single-count bins, and the window keeps it on the main peak, ignoring tails and
+    neighbouring peaks (e.g. one photoelectron peak of a SiPM spectrum).
     """
     counts = np.asarray(counts, dtype=float)
     if centers.size < 3 or counts.sum() < 10:
         return None
     width = float(centers[1] - centers[0])
     span = float(centers[-1] - centers[0])
-    peak = int(np.argmax(counts))
-    mean = float(centers[peak])
-    # Start from the half-maximum width around the highest bin, not the overall spread, so a
-    # neighbouring peak does not widen the first window.
-    half = counts < counts[peak] / 2
-    left = peak - (np.flatnonzero(half[:peak][::-1])[:1].tolist() or [peak])[0]
-    right = peak + (np.flatnonzero(half[peak:])[:1].tolist() or [counts.size - peak])[0]
-    sigma = max(width, (right - left) * width / FWHM_PER_SIGMA)
-    fit = None
+    mean, sigma = _peak_start(centers, counts, width)
     for _ in range(iterations):
-        window = (np.abs(centers - mean) <= 2 * sigma) & (counts > 0)
-        if window.sum() < 3:
-            # Peak narrower than the window can resolve: widen to the neighbouring bins.
-            window = (np.abs(centers - mean) <= 2 * width) & (counts > 0)
-            if window.sum() < 3:
-                return fit
-        x = (centers[window] - mean) / width
-        y = counts[window]
-        a, b, c = np.polyfit(x, np.log(y), 2, w=np.sqrt(y))
-        if a >= 0:
-            return fit
-        new_mean = mean + width * (-b / (2 * a))
-        new_sigma = width * math.sqrt(-1 / (2 * a))
-        if not (centers[0] <= new_mean <= centers[-1] and new_sigma <= span / 2):
-            return fit  # flat or nearly flat: there is no peak
+        half = max(2 * sigma, 1.5 * width)
+        window = np.abs(centers - mean) <= half
+        x, y = centers[window], counts[window]
+        n = float(y.sum())
+        if np.count_nonzero(y) < 3 or n < 10:
+            return None  # a peak in one or two bins cannot be fitted
+        new_mean = float((x * y).sum() / n)
+        variance = float(((x - new_mean) ** 2 * y).sum() / n) - width**2 / 12  # Sheppard
+        k = half / sigma
+        inside = math.erf(k / math.sqrt(2))  # fraction of a Gaussian within ±k σ
+        kept = 1 - 2 * k * math.exp(-k * k / 2) / math.sqrt(2 * math.pi) / inside
+        new_sigma = math.sqrt(max(variance, width**2 / 100) / kept)
+        done = abs(new_mean - mean) < 1e-4 * sigma and abs(new_sigma - sigma) < 1e-4 * sigma
         mean, sigma = new_mean, new_sigma
-        fit = GaussFit(mean, sigma, float(math.exp(c - b * b / (4 * a))))
-    return fit
+        if not (centers[0] <= mean <= centers[-1] and sigma <= span / 2):
+            return None  # flat or nearly flat: there is no peak
+        if done:
+            break
+    low, high = centers[0] - width / 2, centers[-1] + width / 2
+    if mean - 2 * sigma < low and mean + 2 * sigma > high:
+        return None  # wider than the histogram on both sides: flat, not a peak
+    inside = math.erf(max(2 * sigma, 1.5 * width) / sigma / math.sqrt(2))
+    amplitude = n / inside * width / (sigma * math.sqrt(2 * math.pi))
+    return GaussFit(mean, sigma, amplitude)
+
+
+def _peak_start(centers: np.ndarray, counts: np.ndarray, width: float) -> tuple[float, float]:
+    """(mean, sigma) of the highest peak, from the histogram smoothed by a Gaussian of ``k``
+    bins, the smallest k in 0, 1, 2, 4 ... that puts ~50 counts under the peak."""
+    for k in (0, 1, 2, 4, 8, 16):
+        if k:
+            taps = np.exp(-0.5 * (np.arange(-3 * k, 3 * k + 1) / k) ** 2)
+            smooth = np.convolve(counts, taps / taps.sum(), mode="same")
+        else:
+            smooth = counts
+        peak = int(np.argmax(smooth))
+        if smooth[peak] * max(1.0, 2.5 * k) >= 50:
+            break
+    below = smooth < smooth[peak] / 2
+    left = peak - (np.flatnonzero(below[:peak][::-1])[:1].tolist() or [peak])[0]
+    right = peak + (np.flatnonzero(below[peak:])[:1].tolist() or [counts.size - peak])[0]
+    sigma = (right - left) * width / FWHM_PER_SIGMA
+    sigma = math.sqrt(max(sigma**2 - (k * width) ** 2, width**2))  # remove the smoothing
+    return float(centers[peak]), sigma

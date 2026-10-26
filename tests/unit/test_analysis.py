@@ -549,3 +549,14 @@ def test_crossing_indices_match_the_per_sample_state_machine(seed):
     np.testing.assert_array_equal(crossing_indices(v, level, hysteresis), expected)
     falling = _crossings_per_sample(-v, -level, hysteresis)
     np.testing.assert_array_equal(crossing_indices(v, level, hysteresis, rising=False), falling)
+
+
+@pytest.mark.parametrize("seed", range(10))
+def test_gauss_fit_of_a_sparse_histogram_is_not_a_single_bin(seed):
+    """~160 entries in 100 bins (a minute on the bench): the highest bin is mostly noise."""
+    values = np.random.default_rng(seed).normal(8e-9, 74e-12, 160)
+    centers, counts = _histogram(values, 100, (7.5e-9, 8.5e-9))
+    fit = gauss_fit(centers, counts)
+    assert fit is not None
+    assert fit.mean == pytest.approx(8e-9, abs=20e-12)
+    assert fit.sigma == pytest.approx(74e-12, rel=0.3)

@@ -162,7 +162,11 @@ def si_format(value: float, unit: str) -> str:
         return f"0 {unit}"
     prefixes = {-4: "p", -3: "n", -2: "µ", -1: "m", 0: "", 1: "k", 2: "M", 3: "G"}
     power = max(-4, min(3, math.floor(math.log10(abs(value)) / 3)))
-    return f"{value / 1000**power:.4g} {prefixes[power]}{unit}"
+    scaled = float(f"{value / 1000**power:.4g}")
+    if abs(scaled) >= 1000 and power < 3:  # 0.99999 V rounds to 1000 mV: show 1 V
+        power += 1
+        scaled = float(f"{scaled / 1000:.4g}")
+    return f"{scaled:g} {prefixes[power]}{unit}"
 
 
 # --- crossings -------------------------------------------------------------------------------
@@ -485,6 +489,49 @@ class Summary:
     missed: int
 
 
+class RangeMode(Enum):
+    AUTO_ROBUST = "Auto"
+    FULL = "Full"
+    MANUAL = "Manual"
+
+
+ROBUST_SPAN = 8.0  # automatic histogram range: median +- this many robust sigma
+
+
+def _non_empty(low: float, high: float) -> tuple[float, float]:
+    if high > low:
+        return low, high
+    pad = abs(low) * 0.05 or 1.0  # constant values: a range around them, not an empty one
+    return low - pad, low + pad
+
+
+def histogram_range(
+    values: np.ndarray, mode: RangeMode, manual: tuple[float, float] | None = None
+) -> tuple[float, float]:
+    """(low, high) of a histogram of ``values`` (research R6); never empty.
+
+    ``AUTO_ROBUST`` is the median +- 8 robust sigma (MAD-based), limited to the data, so tails
+    and outliers (dark counts, mis-triggers) do not squeeze the main peak into one bin; it falls
+    back to min-max when the MAD is 0. ``FULL`` is min-max, ``MANUAL`` the given (from, to).
+    """
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    if mode is RangeMode.MANUAL and manual is not None:
+        return _non_empty(*sorted(manual))
+    if not values.size:
+        return 0.0, 1.0
+    low, high = float(values.min()), float(values.max())
+    if mode is RangeMode.AUTO_ROBUST:
+        centre = float(np.median(values))
+        sigma = _rms(values, centre)
+        if sigma > 0:
+            low, high = (
+                max(low, centre - ROBUST_SPAN * sigma),
+                min(high, centre + ROBUST_SPAN * sigma),
+            )
+    return _non_empty(low, high)
+
+
 @dataclass(frozen=True)
 class GaussFit:
     mean: float
@@ -509,6 +556,7 @@ def gauss_fit(centers: np.ndarray, counts: np.ndarray, iterations: int = 4) -> G
     if centers.size < 3 or counts.sum() < 10:
         return None
     width = float(centers[1] - centers[0])
+    span = float(centers[-1] - centers[0])
     peak = int(np.argmax(counts))
     mean = float(centers[peak])
     # Start from the half-maximum width around the highest bin, not the overall spread, so a
@@ -530,7 +578,10 @@ def gauss_fit(centers: np.ndarray, counts: np.ndarray, iterations: int = 4) -> G
         a, b, c = np.polyfit(x, np.log(y), 2, w=np.sqrt(y))
         if a >= 0:
             return fit
-        mean = mean + width * (-b / (2 * a))
-        sigma = width * math.sqrt(-1 / (2 * a))
+        new_mean = mean + width * (-b / (2 * a))
+        new_sigma = width * math.sqrt(-1 / (2 * a))
+        if not (centers[0] <= new_mean <= centers[-1] and new_sigma <= span / 2):
+            return fit  # flat or nearly flat: there is no peak
+        mean, sigma = new_mean, new_sigma
         fit = GaussFit(mean, sigma, float(math.exp(c - b * b / (4 * a))))
     return fit

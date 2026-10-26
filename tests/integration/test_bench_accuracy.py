@@ -15,9 +15,20 @@ from synthetic_scope import (
     SyntheticAcquisition,
     SyntheticScope,
     acquisition_block,
+    fit_vertical_scale,
     quantize,
 )
 
+from scope_gui.analysis import (
+    Edge,
+    Kind,
+    Level,
+    MeasurementSpec,
+    RangeMode,
+    gauss_fit,
+    histogram_range,
+    measure_all,
+)
 from scope_gui.models import Waveform
 from scope_gui.wavedesc import decode_waveform
 
@@ -250,3 +261,121 @@ def test_waveforms_of_clips_at_the_screen_edge():
     assert acq.volts["C2"].max() > 10 * edge
     assert c2.volts.max() == pytest.approx(edge, rel=1e-4)
     assert c2.volts.min() >= -128 * 0.002 / CODES_PER_DIV - 1e-6
+
+
+# --- analysis on the synthetic scene (T013, T021) ------------------------------------------
+CF_DELTA_T = MeasurementSpec(
+    Kind.DELTA_T, "C2", Level(0.2, True, Edge.RISING), "C3", Level(0.2, True, Edge.RISING)
+)
+
+
+def measure_population(scene: Scene, specs: list[MeasurementSpec], n: int, seed: int):
+    """``measure_all`` over ``n`` acquisitions: (values[spec, n], true arrival_b - arrival_a)."""
+    values = np.empty((len(specs), n))
+    truth = np.empty(n)
+    for i, acq in enumerate(generate(scene, n, seed)):
+        values[:, i] = measure_all(specs, waveforms_of(acq))
+        truth[i] = acq.arrival_b - acq.arrival_a
+    return values, truth
+
+
+@pytest.fixture(scope="module")
+def bright_dt():
+    """Δt of constant-fraction crossings with 20 photoelectrons per pulse (T013, T021)."""
+    # At the default 20 mV/div, 20 photoelectrons clip at ~160 mV and dark-count pile-ups then
+    # cross the 20 % level (a real effect): give C2/C3 a scale that holds the whole pulse.
+    scene = fit_vertical_scale(make_scene(mean_pe=20.0))
+    values, truth = measure_population(scene, [CF_DELTA_T], N_ACQUISITIONS, 21)
+    return values[0], truth
+
+
+def test_constant_fraction_delta_t_mean_and_sigma(bright_dt):
+    measured, truth = bright_dt
+    assert np.isfinite(measured).all()
+    assert measured.mean() == pytest.approx(2e-9, abs=20e-12)
+    true_sigma = np.std(truth, ddof=1)  # the combined jitter of these very acquisitions
+    assert true_sigma == pytest.approx(np.hypot(70e-12, 90e-12), rel=0.10)
+    assert np.std(measured, ddof=1) == pytest.approx(true_sigma, rel=0.10)
+
+
+def test_clock_frequency_is_ten_megahertz():
+    spec = MeasurementSpec(Kind.FREQUENCY, "C1")
+    values, _ = measure_population(make_scene(), [spec], 100, seed=22)
+    assert np.isfinite(values).all()
+    assert values[0] == pytest.approx(10e6, rel=1e-3)
+
+
+# --- distributions (T021) ------------------------------------------------------------------
+AMPLITUDE_C2 = MeasurementSpec(Kind.AMPLITUDE, "C2")
+COMBINED_JITTER = float(np.hypot(70e-12, 90e-12))
+
+
+def histogram_fit(values: np.ndarray, bins: int = 100):
+    """What the histogram panel does: robust range, histogram of the finite values, Gaussian fit."""
+    values = values[np.isfinite(values)]
+    low, high = histogram_range(values, RangeMode.AUTO_ROBUST)
+    counts, edges = np.histogram(values, bins, (low, high))
+    return gauss_fit((edges[:-1] + edges[1:]) / 2, counts)
+
+
+def histogram_peaks(values: np.ndarray, bin_width: float, top: float, floor: float) -> list[float]:
+    """Positions of the peaks of a spectrum: local maxima of the smoothed histogram above
+    ``floor`` volts and a quarter of the highest, each refined as the centroid of its bins."""
+    counts, edges = np.histogram(values, np.arange(0, top + bin_width / 2, bin_width))
+    x = (edges[:-1] + edges[1:]) / 2
+    smooth = np.convolve(counts, np.array([1, 2, 3, 4, 3, 2, 1.0]) / 16, mode="same")
+    peaks = []
+    for i in range(5, len(smooth) - 5):
+        if smooth[i] == smooth[i - 5 : i + 6].max() and smooth[i] > 0.25 * smooth.max():
+            if x[i] > floor:
+                near = np.abs(x - x[i]) <= 5 * bin_width
+                peaks.append(float((x[near] * counts[near]).sum() / counts[near].sum()))
+    return peaks
+
+
+@pytest.fixture(scope="module")
+def default_population():
+    """Δt and amplitude C2 of the default scene (100 ps samples keep it quick)."""
+    scene = make_scene(points=5000)
+    values, truth = measure_population(scene, [CF_DELTA_T, AMPLITUDE_C2], N_ACQUISITIONS, 31)
+    return values, truth
+
+
+def test_fit_of_the_constant_fraction_histogram_with_bright_pulses(bright_dt):
+    measured, truth = bright_dt
+    fit = histogram_fit(measured)
+    assert fit is not None
+    assert fit.mean == pytest.approx(2e-9, abs=20e-12)
+    assert fit.sigma == pytest.approx(np.std(truth, ddof=1), rel=0.10)
+
+
+def test_fit_of_the_constant_fraction_histogram_in_the_default_scene(default_population):
+    values, truth = default_population
+    delta_t = values[0]
+    assert np.isfinite(delta_t).mean() > 0.9  # most acquisitions have a pulse on both channels
+    fit = histogram_fit(delta_t)
+    assert fit is not None
+    assert fit.mean == pytest.approx(2e-9, abs=20e-12)
+    assert fit.sigma == pytest.approx(COMBINED_JITTER, rel=0.15)
+
+
+def test_amplitude_histogram_shows_the_photoelectron_peaks(default_population):
+    amplitude = default_population[0][1]
+    peaks = histogram_peaks(amplitude, 1e-3, 0.2, floor=0.010)  # above the noise-only peak
+    assert len(peaks) >= 4
+    spacing = (peaks[3] - peaks[0]) / 3  # first four photoelectron peaks
+    assert spacing == pytest.approx(20e-3, rel=0.05)
+
+
+def test_amplitude_histogram_of_a_clipped_channel_peaks_at_the_clipping_level():
+    scene = make_scene(points=FAST_POINTS)
+    scene.channels["C2"] = ChannelSetup(0.005, -0.015)  # 5 mV/div, baseline 3 div below centre
+    values, _ = measure_population(scene, [AMPLITUDE_C2], 400, seed=32)
+    amplitude = values[0]
+    gain = 0.005 / CODES_PER_DIV
+    clip = 127 * gain + 0.015  # highest decoded voltage; the baseline is at 0 V
+    counts, edges = np.histogram(amplitude, 100, (0, 0.06))
+    highest = (edges[np.argmax(counts)] + edges[np.argmax(counts) + 1]) / 2
+    assert highest == pytest.approx(clip, abs=1.5e-3)
+    assert amplitude.max() <= clip + 3 * gain  # nothing above the screen edge
+    assert (amplitude > clip - 2e-3).mean() > 0.4  # most pulses (2+ pe) are clipped

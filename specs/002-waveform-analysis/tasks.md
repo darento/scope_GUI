@@ -188,7 +188,7 @@ within 10 % of the combined jitter, and the frequency reads 10 MHz (quickstart B
   changed during this run" and keeps the statistics (FR-022, R14), Clear hides it; after
   Disconnect, and after a lost connection (resource raising), the table still shows the same N
   and statistics (spec Edge Cases); still only allowlisted commands written (FR-020)
-- [ ] T013 [P] [US2] Add to `tests/integration/test_bench_accuracy.py` (fixed seeds,
+- [X] T013 [P] [US2] Add to `tests/integration/test_bench_accuracy.py` (fixed seeds,
   `SyntheticAcquisition` → `Waveform`s → `measure_all`, no GUI): with `mean_pe=20`, 2,000
   acquisitions, Δt C2 lead 20 % → C3 lead 20 % has mean within 20 ps of 2,000 ps and sample σ
   within 10 % of the true combined jitter of those acquisitions; with the default scene
@@ -256,20 +256,20 @@ of 2 ns and σ within 15 % of 114 ps (quickstart B2, B4, B5)
 
 ### Tests for User Story 3
 
-- [ ] T020 [P] [US3] Add guarantees 11–12 to `tests/unit/test_analysis.py`: `gauss_fit` on a
+- [X] T020 [P] [US3] Add guarantees 11–12 to `tests/unit/test_analysis.py`: `gauss_fit` on a
   sampled Gaussian with a second smaller peak and tails → mean and σ within 5 %, `fwhm` =
   2.3548 σ; `None` for < 10 entries or a flat histogram; `histogram_range(values,
   RangeMode.AUTO_ROBUST)` with 25 % outliers → contains ≥ 95 % of the main peak and excludes
   the far outliers (median ± 8 robust σ); `FULL` → min–max; `MANUAL` → the given (from, to);
   constant values → a non-empty range
-- [ ] T021 [P] [US3] Add to `tests/integration/test_bench_accuracy.py`: with `mean_pe=20`,
+- [X] T021 [P] [US3] Add to `tests/integration/test_bench_accuracy.py`: with `mean_pe=20`,
   2,000 acquisitions, `gauss_fit` of the constant-fraction Δt histogram → σ within 10 % of the
   true combined jitter and mean within 20 ps of 2,000 ps (SC-002); default scene, Amplitude C2
   histogram shows ≥ 4 peaks spaced by 20 mV ± 5 % (SC-004; find peaks as local maxima of the
   histogram); default scene, fitted Δt mean within 20 ps of 2 ns and σ within 15 % (US3
   Independent Test); a scene with C2 at 5 mV/div clips large pulses and the amplitude
   histogram's highest bin sits at the clipping level (spec Edge Cases)
-- [ ] T022 [P] [US3] Write `tests/integration/test_histogram_panel.py` (pytest-qt, statistics
+- [X] T022 [P] [US3] Write `tests/integration/test_histogram_panel.py` (pytest-qt, statistics
   filled directly): histogram view title/x label = measurement name with unit; stats line shows
   N, outside, mean, σ; Fit on → curve drawn and μ, σ, FWHM shown, flat data → "no fit"; bins
   limited to 10–1000; Log toggles the count axis; Manual range shows from/to fields and is
@@ -279,13 +279,13 @@ of 2 ns and σ within 15 % of 114 ps (quickstart B2, B4, B5)
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] Implement in `src/scope_gui/analysis.py`: `RangeMode` (`AUTO_ROBUST` default,
+- [X] T023 [US3] Implement in `src/scope_gui/analysis.py`: `RangeMode` (`AUTO_ROBUST` default,
   `FULL`, `MANUAL`), `histogram_range(values, mode, manual=None) -> tuple[float, float]`
   (median ± 8 robust σ, widened to a non-empty range for constant values); frozen
   `GaussFit(mean, sigma, amplitude)` with `fwhm` and `__call__`; `gauss_fit(centers, counts)`
   per R5 (weighted log-parabola on ±2 σ around the highest peak, started from the half-max
   width, iterated, `None` when no sensible fit); make T020 and T021 pass
-- [ ] T024 [US3] Create `src/scope_gui/ui/histogram_panel.py` per contracts/ui.md: view
+- [X] T024 [US3] Create `src/scope_gui/ui/histogram_panel.py` per contracts/ui.md: view
   selector Histogram | Trend | Correlation, X measurement combo (correlation; default first
   other measurement), Bins spin box (100, 10–1000), Range combo Auto / Full / Manual with
   from/to fields, Log and Fit check boxes (off, on); step histogram via `np.histogram` with SI
@@ -311,7 +311,7 @@ double-click resets; cursors 100 ns apart read Δt 100 ns and 1/Δt 10 MHz (quic
 
 ### Tests for User Story 4
 
-- [ ] T026 [P] [US4] Write `tests/unit/test_persistence.py`: a trace is rasterised per pixel
+- [X] T026 [P] [US4] Write `tests/unit/test_persistence.py`: a trace is rasterised per pixel
   column of a given view (x range, y range in divisions, width × height) — each column gets
   one hit on every pixel between the min and max of its samples; a fast edge with fewer
   samples than pixels fills the column span without gaps (consecutive columns connected);
@@ -337,7 +337,7 @@ double-click resets; cursors 100 ns apart read Δt 100 ns and 1/Δt 10 MHz (quic
 
 ### Implementation for User Story 4
 
-- [ ] T029 [P] [US4] Create `src/scope_gui/ui/persistence.py` per research R7 (numpy only):
+- [X] T029 [P] [US4] Create `src/scope_gui/ui/persistence.py` per research R7 (numpy only):
   density map per channel over the current view (≈ 1 px per bin), `add(waveforms, view)`
   rasterising each trace as min–max spans per pixel column (`np.minimum.reduceat` /
   `np.maximum.reduceat`, spans extended to the neighbouring columns' values; measured

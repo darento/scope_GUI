@@ -91,6 +91,25 @@ class Scene:
         return 10 * self.time_per_div / self.points
 
 
+def fit_vertical_scale(scene: Scene) -> Scene:
+    """Set C2/C3 to a V/div (1-2-5 steps) at which ``mean_pe`` + 3 sigma photoelectrons stay
+    on the 8-bit range, with the baseline 3 divisions off centre as in the default scene.
+
+    The default 20 mV/div suits the default 3 photoelectrons; with a larger ``mean_pe`` the
+    pulses would clip and a percent level would sit on the clipped top (a real effect, see the
+    spec's edge cases). Returns ``scene`` (modified in place) for chaining.
+    """
+    peak = scene.pe_volts * (scene.mean_pe + 3 * math.sqrt(scene.mean_pe))
+    needed = peak / (CODE_MAX / CODES_PER_DIV + 3)  # baseline 3 div below centre
+    decade = 10 ** math.floor(math.log10(needed))
+    volts_per_div = next(m * decade for m in (1, 2, 5, 10) if m * decade >= needed)
+    volts_per_div = max(volts_per_div, scene.channels["C2"].volts_per_div)
+    scene.channels["C2"].volts_per_div = scene.channels["C3"].volts_per_div = volts_per_div
+    scene.channels["C2"].offset = -3 * volts_per_div
+    scene.channels["C3"].offset = 3 * volts_per_div
+    return scene
+
+
 def _edge(t: np.ndarray, at: float, edge_time: float) -> np.ndarray:
     """Smooth 0 -> 1 step at ``at`` with a 10-90 % time of ``edge_time``."""
     return 0.5 * (1 + np.tanh((t - at) * (2 * math.atanh(0.8) / edge_time)))

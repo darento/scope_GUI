@@ -10,7 +10,10 @@ from scope_gui.analysis import (
     Kind,
     Level,
     MeasurementSpec,
+    RangeMode,
     Statistics,
+    gauss_fit,
+    histogram_range,
     measure_all,
     reference_levels,
 )
@@ -423,3 +426,103 @@ def test_statistics_empty_and_clear():
     stats.add(1.0)
     stats.clear()
     assert stats.size == 0 and stats.history().size == 0
+
+
+# --- 11: Gaussian fit ----------------------------------------------------------------------------
+
+
+def _histogram(values, bins=100, span=None):
+    counts, edges = np.histogram(values, bins=bins, range=span)
+    return (edges[:-1] + edges[1:]) / 2, counts
+
+
+def test_gauss_fit_follows_the_main_peak_among_a_second_peak_and_tails():
+    rng = np.random.default_rng(1)
+    values = np.concatenate(
+        [
+            rng.normal(2.0, 0.12, 20_000),  # main peak
+            rng.normal(2.9, 0.12, 6_000),  # smaller neighbour
+            rng.normal(2.0, 0.6, 2_000),  # tails
+        ]
+    )
+    centers, counts = _histogram(values, 120, (0.0, 4.0))
+    fit = gauss_fit(centers, counts)
+    assert fit is not None
+    assert fit.mean == pytest.approx(2.0, rel=0.05)
+    assert fit.sigma == pytest.approx(0.12, rel=0.05)
+    assert fit.fwhm == pytest.approx(2.3548 * fit.sigma, rel=1e-3)
+    assert fit(fit.mean) == pytest.approx(fit.amplitude)
+    assert fit(fit.mean + fit.sigma) == pytest.approx(fit.amplitude * math.exp(-0.5))
+    assert fit.amplitude == pytest.approx(counts.max(), rel=0.15)
+
+
+def test_gauss_fit_of_a_plain_gaussian_in_a_narrow_range():
+    values = np.random.default_rng(2).normal(-5e-9, 1e-10, 3000)
+    centers, counts = _histogram(values, 40)  # min-max range: 3000 samples span about 7 sigma
+    fit = gauss_fit(centers, counts)
+    assert fit is not None
+    assert fit.mean == pytest.approx(-5e-9, abs=0.05e-9 * 0.2)
+    assert fit.sigma == pytest.approx(1e-10, rel=0.05)
+
+
+def test_gauss_fit_needs_data_and_a_peak():
+    centers = np.linspace(0, 1, 50)
+    assert gauss_fit(centers, np.zeros(50)) is None
+    few = np.zeros(50)
+    few[20:23] = [1, 3, 2]  # 6 entries
+    assert gauss_fit(centers, few) is None
+    assert gauss_fit(centers, np.full(50, 40)) is None  # flat: no peak
+    assert gauss_fit(centers[:2], np.array([50, 60])) is None
+    spike = np.zeros(50)
+    spike[25] = 500  # a single non-empty bin cannot be fitted
+    assert gauss_fit(centers, spike) is None
+
+
+# --- 12: histogram range -------------------------------------------------------------------------
+
+
+def test_auto_range_ignores_far_outliers_and_keeps_the_main_peak():
+    rng = np.random.default_rng(3)
+    main = rng.normal(2e-9, 0.12e-9, 7500)
+    outliers = rng.uniform(-100e-9, 100e-9, 2500)  # 25 %
+    values = np.concatenate([main, outliers])
+    low, high = histogram_range(values, RangeMode.AUTO_ROBUST)
+    inside = ((main >= low) & (main <= high)).mean()
+    assert inside >= 0.95
+    assert high - low < 10e-9  # nowhere near the +-100 ns of the outliers
+    assert low < 2e-9 < high
+
+
+def test_auto_range_is_the_median_plus_minus_eight_robust_sigma():
+    rng = np.random.default_rng(4)
+    values = np.concatenate([rng.normal(10.0, 1.0, 5000), [1e6, -1e6]])
+    low, high = histogram_range(values, RangeMode.AUTO_ROBUST)
+    assert low == pytest.approx(10.0 - 8, abs=0.5)
+    assert high == pytest.approx(10.0 + 8, abs=0.5)
+
+
+def test_auto_range_never_exceeds_the_data():
+    values = np.random.default_rng(5).normal(0.0, 1.0, 100)
+    low, high = histogram_range(values, RangeMode.AUTO_ROBUST)
+    assert (low, high) == (values.min(), values.max())  # +-8 sigma is wider than the data
+
+
+def test_full_and_manual_ranges():
+    values = np.array([3.0, 1.0, 2.0, np.nan, 100.0])
+    assert histogram_range(values, RangeMode.FULL) == (1.0, 100.0)
+    assert histogram_range(values, RangeMode.MANUAL, (-2.0, 5.0)) == (-2.0, 5.0)
+    assert histogram_range(values, RangeMode.MANUAL, (5.0, -2.0)) == (-2.0, 5.0)  # any order
+
+
+def test_constant_empty_and_degenerate_ranges_are_not_empty():
+    for mode in RangeMode:
+        for values in (np.full(10, 3.0), np.zeros(4), np.array([]), np.array([np.nan]), [7.0]):
+            low, high = histogram_range(np.asarray(values), mode, (1.0, 1.0))
+            assert high > low
+    low, high = histogram_range(np.full(10, 3.0), RangeMode.AUTO_ROBUST)
+    assert low < 3.0 < high
+
+
+def test_auto_range_falls_back_to_min_max_when_the_mad_is_zero():
+    values = np.concatenate([np.full(100, 1.0), [5.0, 9.0]])  # MAD = 0
+    assert histogram_range(values, RangeMode.AUTO_ROBUST) == (1.0, 9.0)

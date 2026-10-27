@@ -124,6 +124,13 @@ class MeasurementSpec:
             raise ValueError("invalid level")
 
     @property
+    def channels(self) -> frozenset[str]:
+        """Channels the measurement reads; more than one = cross-channel (003 FR-015)."""
+        if self.kind is Kind.DELTA_T:
+            return frozenset((self.source, self.source2))
+        return frozenset((self.source,))
+
+    @property
     def name(self) -> str:
         if self.kind is Kind.DELTA_T:
             return f"Δt {self.source} {self.level.label()} → {self.source2} {self.level2.label()}"

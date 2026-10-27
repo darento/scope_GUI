@@ -108,6 +108,12 @@ def test_names():
     assert cfd.name == "Δt C2 lead 20% → C3 lead 20%"
 
 
+def test_channels_of_a_measurement():
+    assert MeasurementSpec(Kind.DELTA_T, "C1", source2="C2").channels == {"C1", "C2"}
+    assert MeasurementSpec(Kind.DELTA_T, "C2", source2="C2").channels == {"C2"}
+    assert MeasurementSpec(Kind.AMPLITUDE, "C3").channels == {"C3"}  # source2 unused
+
+
 @pytest.mark.parametrize("kind", list(Kind))
 def test_spec_round_trip(kind):
     spec = MeasurementSpec(kind, "C3", rel(0.35, Edge.FALLING), "C1", Level(-0.02))

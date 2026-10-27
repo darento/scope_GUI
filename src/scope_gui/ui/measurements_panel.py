@@ -87,6 +87,9 @@ class MeasurementsPanel(QWidget):
         # Trigger time of every processed acquisition, filled in step with every Statistics so
         # all histories end at the same acquisition (AcquisitionLog, research R10).
         self.trigger_log = Statistics()
+        # 1.0 = every channel of the acquisition came from one trigger, 0.0 = mixed (003 R10);
+        # same capacity and alignment as ``trigger_log``.
+        self.coherence_log = Statistics()
 
         self.add_button = QPushButton("Add…")
         self.edit_button = QPushButton("Edit…")
@@ -214,16 +217,24 @@ class MeasurementsPanel(QWidget):
 
     # --- statistics -----------------------------------------------------------------------------
     def process(
-        self, waveforms: dict[str, Waveform], gate: tuple[float, float] | None = None
+        self,
+        waveforms: dict[str, Waveform],
+        gate: tuple[float, float] | None = None,
+        coherent: bool = True,
     ) -> None:
-        """Measure one acquisition: exactly one entry per measurement (FR-008)."""
+        """Measure one acquisition: exactly one entry per measurement (FR-008).
+
+        ``coherent=False`` (channels from different triggers): measurements of more than one
+        channel are recorded as missed, the others are measured as usual (003 FR-015).
+        """
         first = next((waveforms[ch] for ch in CHANNELS if ch in waveforms), None)
         if first is None:
             return
         values = measure_all(self.specs, waveforms, gate)
-        for stats, value in zip(self.stats, values, strict=True):
-            stats.add(value)
+        for spec, stats, value in zip(self.specs, self.stats, values, strict=True):
+            stats.add(value if coherent or len(spec.channels) < 2 else math.nan)
         self.trigger_log.add(first.trigger_time)
+        self.coherence_log.add(1.0 if coherent else 0.0)
         self._refresh_rows()
         self.processed.emit()
 
@@ -231,6 +242,7 @@ class MeasurementsPanel(QWidget):
         for stats in self.stats:
             stats.clear()
         self.trigger_log.clear()
+        self.coherence_log.clear()
         self.settings_note.hide()
         self._refresh_rows()
         self.processed.emit()

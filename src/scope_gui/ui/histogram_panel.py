@@ -67,6 +67,7 @@ class HistogramPanel(QWidget):
         super().__init__(parent)
         self._specs: list[MeasurementSpec] = []
         self._stats: list[Statistics] = []
+        self._coherence: Statistics | None = None
         self._selected: int | None = None
         self._x_specs: tuple[MeasurementSpec, ...] = ()
         self._x_indices: list[int] = []  # index in the measurement list of each X combo entry
@@ -176,13 +177,17 @@ class HistogramPanel(QWidget):
         specs: list[MeasurementSpec],
         stats: list[Statistics],
         selected: int | None,
+        coherence: Statistics | None = None,
     ) -> None:
         """Show the measurement ``specs[selected]``; ``stats[i]`` holds the values of ``specs[i]``.
 
-        The lists are read, not copied: call again after the statistics changed. Only the
-        current view is recomputed, and nothing while the panel is hidden.
+        ``coherence`` holds 1.0 (one trigger) or 0.0 (mixed) per acquisition, ending at the same
+        acquisition as the statistics; None means all coherent. The lists are read, not copied:
+        call again after the statistics changed. Only the current view is recomputed, and
+        nothing while the panel is hidden.
         """
         self._specs, self._stats = list(specs), list(stats)
+        self._coherence = coherence
         valid = selected is not None and 0 <= selected < len(specs)
         self._selected = selected if valid else None
         self._update_x_choices()
@@ -364,7 +369,13 @@ class HistogramPanel(QWidget):
         x_all, y_all = self._history(x_index), self._history(self._selected)
         n = min(x_all.size, y_all.size)  # histories end at the latest acquisition: align there
         x_all, y_all = x_all[x_all.size - n :], y_all[y_all.size - n :]
-        both = np.flatnonzero(np.isfinite(x_all) & np.isfinite(y_all))[-CORRELATION_POINTS:]
+        keep = np.isfinite(x_all) & np.isfinite(y_all)
+        # A pair spanning two channels is meaningless if they came from different triggers (R10).
+        if self._coherence is not None and len(x_spec.channels | spec.channels) > 1:
+            mixed = self._coherence.history() == 0.0
+            m = min(n, mixed.size)
+            keep[n - m :] &= ~mixed[mixed.size - m :]
+        both = np.flatnonzero(keep)[-CORRELATION_POINTS:]
         x, y = x_all[both], y_all[both]
         self.scatter.setData(x, y)
         self.scatter.setVisible(True)

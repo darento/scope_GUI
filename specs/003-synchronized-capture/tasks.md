@@ -114,8 +114,8 @@ trigger time for all channels; switch it off: the bench's trigger mode is the on
   faster than the read time); `rate_updated` reports synchronized updates (FR-012); the next
   `ARM` is sent right after a set is emitted, but no channel of the next set is read before
   `waveforms_consumed()`; no `ARM` while `set_capture_paused(True)`; each cycle transfers at
-  most one channel (record the bench's `WF? ALL` per cycle); remembered Auto + `triggers=False`: exactly one `FRTR` per arm,
-  sent ≥ 0.5 s after `ARM`; remembered Normal/Stopped: never `FRTR`, status
+  most one channel (record the bench's `WF? ALL` per cycle); remembered Auto +
+  `triggers=False`: exactly one `FRTR` per arm, sent ≥ 0.5 s after `ARM`; remembered Normal/Stopped: never `FRTR`, status
   `WAITING_FOR_TRIGGER` after 1 s armed; emitted status `trigger_mode` = remembered mode while
   on; off: `TRMD <mode>` sent and the bench back in that mode (from AUTO, NORM, SINGLE, STOP);
   `close_connection` and `shutdown` while on restore before closing; switch off while armed in

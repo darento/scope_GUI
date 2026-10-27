@@ -6,7 +6,8 @@
 |---|---|---|
 | `on` | bool | Off at start and after every connect (FR-001) |
 | `restore_mode` | `TriggerMode` | Read with `TRMD?` when switched on (R5) |
-| `phase` | `IDLE` / `ARMED` | `IDLE`: next cycle arms (when the GUI consumed the last update and the view is not paused); `ARMED`: polling `TRMD?` |
+| `phase` | `IDLE` / `ARMED` / `READING` | `IDLE`: next cycle arms (unless paused); `ARMED`: polling `TRMD?`; `READING`: one channel per cycle |
+| `pending` | dict channel → Waveform | Channels read so far in `READING` |
 | `armed_at` | monotonic s | For forcing (Auto, 0.5 s, R4) and "Waiting for trigger" (1 s) |
 | `forced` | bool | `FRTR` already sent for this arm |
 | `armed_count`, `forced_count` | int | Logged when the session ends (FR-007) |
@@ -15,10 +16,11 @@ State transitions:
 
 ```text
 OFF --switch on (TRMD? read -> restore_mode)--> ON/IDLE
-ON/IDLE --GUI consumed, not paused: ARM, read status (its TRMD? is the first poll)--> ON/ARMED
+ON/IDLE --not paused: TRMD? (expect STOP), ARM, read status (its TRMD? is the first poll)--> ON/ARMED
 ON/ARMED --TRMD? = SINGLE, Auto, >0.5 s, not forced: FRTR--> ON/ARMED
-ON/ARMED --TRMD? = STOP: read all channels, emit--> ON/IDLE
-ON/ARMED or ON/IDLE --TRMD? = AUTO/NORM (external)--> OFF (no restore, user told)
+ON/ARMED --TRMD? = STOP and the GUI consumed the last set--> ON/READING
+ON/READING --one enabled channel per cycle; after the last: emit, count for the rate--> ON/IDLE
+ON/IDLE or ON/ARMED --TRMD? = AUTO/NORM (external)--> OFF (no restore, user told)
 ON/* --switch off | disconnect | shutdown: TRMD <restore_mode>, TRMD? check--> OFF
 ON/* --link lost | conflict--> OFF (cannot restore; user told the mode to set back)
 ```
@@ -28,6 +30,10 @@ Validation rules:
 - Only `ARM`, `FRTR` and `TRMD <restore_mode>` are ever written (contract
   [driver-control.md](contracts/driver-control.md)).
 - `FRTR` only when `restore_mode` is `AUTO`, at most once per arm.
+- The next `ARM` follows the emit at once (the scope acquires while the GUI draws, R3); the
+  wait for the GUI is before `READING`, so at most one set is queued (002 hand-off).
+- One channel per cycle keeps every cycle to one transfer, so a restore waits at most one
+  transfer (R8).
 - While on, the emitted `ScopeStatus.acquisition.trigger_mode` is `restore_mode` (R7);
   `acq_state` is `ACQUIRING`, or `WAITING_FOR_TRIGGER` after 1 s armed.
 

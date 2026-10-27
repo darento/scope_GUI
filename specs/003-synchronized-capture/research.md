@@ -35,9 +35,13 @@ afterwards.
 - **Rationale**: every poll is a short worker cycle, so a switch-off, disconnect or close is
   handled within one poll, never blocked by a long wait (FR-004).
 - **Rate**: the full status read (≈ 20 short queries, its `TRMD?` included) is done right after
-  `ARM`, while the scope acquires, and counts as the first poll; so an update costs about
-  arm→done (≈ 80 ms) + channel reads (≈ 30–70 ms each at 200k when stopped), ≈ 6–7 per second
-  at the reference setup (SC-002 ≥ 5).
+  `ARM`, while the scope acquires, and counts as the first poll. The next `ARM` is sent right
+  after the channels are read, so the scope acquires while the window draws (≈ 23 ms at 100k,
+  ≈ 230 ms at 2.5M); the worker waits for the window only before reading the next set. An
+  update then costs about max(arm→done ≈ 80 ms, window draw) + channel reads (≈ 30–70 ms each
+  at 200k when stopped): ≈ 6–7 per second at the reference setup (SC-002 ≥ 5).
+- **External changes between updates**: a `TRMD?` before every `ARM` (expected `STOP`) catches
+  a front-panel Auto/Normal set while the app was not polling (R6); ≈ 5 ms per update.
 - **Alternatives considered**: `WAIT <s>` + `*OPC?` (worked: 10 of 10 coherent; but it blocks
   the link for up to the wait time and adds two commands to the allowlist; not needed).
 
@@ -74,9 +78,10 @@ afterwards.
 
 ## R8 Responsiveness and restore time
 
-- **Decision**: slots (switch on/off, disconnect, shutdown) run between worker cycles; the
-  longest cycle is one channel transfer. Restore therefore completes within one transfer plus
-  two short queries: well under 2 s up to 200k points (≈ 30–130 ms per channel), about 1 s at
+- **Decision**: slots (switch on/off, disconnect, shutdown) run between worker cycles. While
+  the mode is on, the channels are read one per cycle (the scope is stopped until the next
+  `ARM`, so they stay coherent), so the longest cycle is one channel transfer. Restore therefore
+  completes within one transfer plus two short queries: well under 2 s up to 200k points (≈ 30–130 ms per channel), about 1 s at
   2.5M points per channel. The window waits up to 3 s on close while the mode is on (instead of
   1 s) before aborting I/O, so the restore is not cut off.
 - **Alternatives considered**: interrupting a transfer to restore sooner (would lose the reply

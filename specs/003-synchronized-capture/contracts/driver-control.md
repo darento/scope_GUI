@@ -46,9 +46,10 @@ Guarantees:
 1. Off after every connect; `set_synchronized(True)` while not connected is ignored.
 2. Switching on reads and remembers the trigger mode, logs `synchronized capture on (was
    <mode>)`, emits `sync_changed(True, "")`.
-3. While on, one update = `ARM` → status read (its `TRMD?` is the first poll) → `TRMD?`
-   polled every 10 ms until `STOP` → all enabled channels read → `waveforms_updated`; the next
-   `ARM` only after `waveforms_consumed()` and while not paused.
+3. While on, one update = `TRMD?` (expect `STOP`) → `ARM` → status read (its `TRMD?` is the
+   first poll) → `TRMD?` polled every 10 ms until `STOP` → after `waveforms_consumed()`, one
+   enabled channel read per cycle → `waveforms_updated` (counted for the rate) → next `ARM` at
+   once unless paused. At most one set waits for the GUI.
 4. Remembered mode Auto: `FRTR` once when still armed 0.5 s after `ARM`.
 5. `TRMD?` = `AUTO`/`NORM` while on: off without restore, log, `sync_changed(False,
    "Trigger mode changed on the scope - synchronized capture switched off")`.

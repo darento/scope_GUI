@@ -139,8 +139,8 @@ a scope.
   says so).
 - **Connection lost while the mode is on**: the app cannot restore; it tells the user the scope
   may be left stopped, with the mode it should be set back to.
-- **Pause in the app while the mode is on**: no new acquisition is armed; the scope stays
-  stopped on the acquisition shown, so the app and the scope screen agree. Resume re-arms.
+- **Pause in the app while the mode is on**: no new acquisition is armed; the scope stops on the
+  acquisition shown or, if one was already armed, on the next one. Resume re-arms.
 - **Slow triggers in Normal**: waiting must not freeze the window; switching off, disconnecting
   or closing must restore within 2 seconds even while waiting for a trigger.
 - **One channel enabled**: the mode works (nothing to mix); the mixed-trigger warning never

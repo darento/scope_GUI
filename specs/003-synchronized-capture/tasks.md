@@ -111,16 +111,20 @@ trigger time for all channels; switch it off: the bench's trigger mode is the on
   `SyntheticScope` (recorder consumes waveforms like the GUI): mode off after connect and
   `set_synchronized(True)` ignored when not connected; on: `TRMD?` read, `sync_changed(True,
   "")`, every emitted set has one trigger time across channels (≥ 10 sets at a trigger rate
-  faster than the read time); no `ARM` while the last set is not consumed or while
-  `set_capture_paused(True)`; remembered Auto + `triggers=False`: exactly one `FRTR` per arm,
+  faster than the read time); `rate_updated` reports synchronized updates (FR-012); the next
+  `ARM` is sent right after a set is emitted, but no channel of the next set is read before
+  `waveforms_consumed()`; no `ARM` while `set_capture_paused(True)`; each cycle transfers at
+  most one channel (record the bench's `WF? ALL` per cycle); remembered Auto + `triggers=False`: exactly one `FRTR` per arm,
   sent ≥ 0.5 s after `ARM`; remembered Normal/Stopped: never `FRTR`, status
   `WAITING_FOR_TRIGGER` after 1 s armed; emitted status `trigger_mode` = remembered mode while
-  on; off: `TRMD <mode>` sent and the bench back in that mode (from AUTO, NORM, STOP);
+  on; off: `TRMD <mode>` sent and the bench back in that mode (from AUTO, NORM, SINGLE, STOP);
   `close_connection` and `shutdown` while on restore before closing; switch off while armed in
-  Normal without triggers restores within 2 s; bench mode set to `AUTO` externally while on →
+  Normal without triggers restores within 2 s; bench mode set to `AUTO` externally while armed
+  and, separately, between two updates (caught by the `TRMD?` before `ARM`) →
   `sync_changed(False, "Trigger mode changed on the scope - synchronized capture switched
   off")` and no `TRMD` sent; link lost while on (bench `reset`) → LOST message ends with `The
-  scope may be left stopped - set its trigger mode back to Auto.`; written commands while on
+  scope may be left stopped - set its trigger mode back to Auto.`, and the same sentence after a
+  conflict (foreign replies for `CONFLICT_AFTER` cycles); written commands while on
   ⊆ {`ARM`, `FRTR`, `TRMD <remembered>`}; with the mode never switched on, `controls` is empty;
   the INFO log has `synchronized capture on (was Auto)` and `synchronized capture off
   (switched off): N acquisitions armed, M triggers forced`
@@ -137,13 +141,16 @@ trigger time for all channels; switch it off: the bench's trigger mode is the on
 
 - [ ] T011 [US1] Implement synchronized capture in `src/scope_gui/worker.py` per data-model
   state transitions: `sync_changed = Signal(bool, str)`; `set_synchronized` slot; thread-safe
-  `set_capture_paused` (`threading.Event`); session fields (`restore_mode`, phase `IDLE`/`ARMED`,
-  `armed_at`, `forced`, counts) reset on connect; in `_cycle`, when on: `IDLE` + consumed +
-  not paused → `arm()`, `read_status()` (its `TRMD?` is the first poll), → `ARMED`; `ARMED` →
-  `read_trigger_mode()` every `SYNC_POLL_MS = 10`: `STOP` → read all enabled channels, emit
-  status (with `trigger_mode` = remembered mode, `acq_state` per R3/data-model) and waveforms,
-  → `IDLE`; `SINGLE` + remembered Auto + ≥ `FORCE_AFTER_S = 0.5` s + not forced →
-  `force_trigger()`; `AUTO`/`NORM` → end without restore (FR-008); `close_connection`,
+  `set_capture_paused` (`threading.Event`); session fields (`restore_mode`, phase
+  `IDLE`/`ARMED`/`READING`, `pending`, `armed_at`, `forced`, counts) reset on connect; in
+  `_cycle`, when on: `IDLE` + not paused → `read_trigger_mode()` (expect `STOP`; `AUTO`/`NORM`
+  → external change), `arm()`, `read_status()` (its `TRMD?` is the first poll) → `ARMED`;
+  `ARMED` → `read_trigger_mode()` every `SYNC_POLL_MS = 10`: `SINGLE` + remembered Auto + ≥
+  `FORCE_AFTER_S = 0.5` s + not forced → `force_trigger()`; `AUTO`/`NORM` → end without
+  restore (FR-008); `STOP` → wait for `waveforms_consumed()` → `READING`: one enabled channel
+  per cycle (R8); after the last: log a warning if the trigger times differ, emit status (with
+  `trigger_mode` = remembered mode, `acq_state` per data-model) and waveforms, append to
+  `_acq_times` for the rate (FR-012) → `IDLE` (arms at once, R3); `close_connection`,
   `shutdown` and switching off restore first (failed restore → message naming the mode);
   `_handle_failure`/conflict paths append the "may be left stopped" sentence when on; INFO logs
   for on/off/restore with counts (FR-007); the mode-off loop unchanged; make T009 pass

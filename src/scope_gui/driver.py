@@ -1,7 +1,10 @@
 """The only module that talks to the instrument (Constitution Principle I).
 
-Every command sent must match ALLOWED_COMMANDS: read-only queries verified on the WR610Zi
-(contracts/scope-driver.md). Anything else raises CommandNotAllowed before reaching the wire.
+Every query sent must match ALLOWED_COMMANDS: read-only queries verified on the WR610Zi
+(contracts/scope-driver.md). The one exception is the acquisition control of synchronized capture
+(Constitution v2.1.0, Principle III): writes matching CONTROL_COMMANDS (ARM, FRTR and TRMD <mode>
+to restore a remembered trigger mode), sent only through _write. The two lists never overlap.
+Anything else raises CommandNotAllowed before reaching the wire.
 """
 
 import logging
@@ -61,6 +64,12 @@ ALLOWED_COMMANDS = tuple(
     )
 )
 
+# Acquisition control of synchronized capture: the only commands that may be written, and
+# only to arm/force one acquisition or to restore the trigger mode the user had.
+CONTROL_COMMANDS = tuple(
+    re.compile(pattern) for pattern in (r"ARM", r"FRTR", r"TRMD (?:AUTO|NORM|SINGLE|STOP)")
+)
+
 QUERY_TIMEOUT_MS = 3000
 RECOVER_TIMEOUT_MS = 1500
 WAVEFORM_TIMEOUT_BASE_MS = 2000
@@ -94,6 +103,10 @@ _LONG_NAMES = {
 
 def is_allowed(command: str) -> bool:
     return any(pattern.fullmatch(command) for pattern in ALLOWED_COMMANDS)
+
+
+def is_control_allowed(command: str) -> bool:
+    return any(pattern.fullmatch(command) for pattern in CONTROL_COMMANDS)
 
 
 def parse_value(reply: str) -> str:
@@ -275,7 +288,7 @@ class ScopeDriver:
                 )
                 for ch in CHANNELS
             )
-            mode = TriggerMode[parse_value(self._query("TRMD?")).upper()]
+            mode = self._trigger_mode()
             acquisition = AcquisitionSettings(
                 time_per_div=parse_float(self._query("TDIV?")),
                 trigger_delay=parse_float(self._query("TRDL?")),
@@ -286,6 +299,30 @@ class ScopeDriver:
             raise ScopeProtocolError(f"unexpected setting reply: {exc}") from exc
         state = AcqState.STOPPED if mode is TriggerMode.STOP else AcqState.ACQUIRING
         return ScopeStatus(channels, acquisition, state, time.monotonic())
+
+    def read_trigger_mode(self) -> TriggerMode:
+        """Current trigger mode (read-only ``TRMD?``)."""
+        try:
+            return self._trigger_mode()
+        except (ValueError, KeyError) as exc:
+            raise ScopeProtocolError(f"unexpected trigger mode reply: {exc}") from exc
+
+    # --- acquisition control (synchronized capture only) -------------------------------------
+    def arm(self) -> None:
+        """Arm one acquisition (``ARM``); the scope stops after the next trigger."""
+        self._write("ARM")
+
+    def force_trigger(self) -> None:
+        """Force the armed acquisition to trigger now (``FRTR``)."""
+        self._write("FRTR")
+
+    def restore_trigger_mode(self, mode: TriggerMode) -> None:
+        """Put the trigger mode back to ``mode`` and confirm it with ``TRMD?``."""
+        self._write(f"TRMD {mode.name}")
+        actual = self.read_trigger_mode()
+        if actual is not mode:
+            raise ScopeProtocolError(f"trigger mode is {actual.value}, expected {mode.value}")
+        log.info("trigger mode restored to %s", mode.value)
 
     def read_descriptor(self, channel: str) -> WaveformDescriptor:
         command = f"{channel}:WF? DESC"
@@ -316,6 +353,9 @@ class ScopeDriver:
             raise CommandNotAllowed(f"refusing to send non-allowlisted command {command!r}")
         if self._resource is None:
             raise ScopeError("not connected")
+
+    def _trigger_mode(self) -> TriggerMode:
+        return TriggerMode[parse_value(self._query("TRMD?")).upper()]
 
     def _check_source(self, command: str, desc: WaveformDescriptor) -> None:
         if desc.source != command.split(":")[0]:
@@ -351,6 +391,22 @@ class ScopeDriver:
         log.debug("reply %s", reply)
         self._validate(command, reply)
         return reply
+
+    def _write(self, command: str) -> None:
+        """Send an allowlisted control command and read nothing (the scope does not reply)."""
+        if not is_control_allowed(command):
+            raise CommandNotAllowed(f"refusing to send non-allowlisted command {command!r}")
+        if self._resource is None:
+            raise ScopeError("not connected")
+        log.debug("write %s", command)
+        try:
+            self._resource.timeout = QUERY_TIMEOUT_MS
+            self._resource.write(command)
+        except VisaIOError as exc:
+            raise map_visa_error(exc, command) from exc
+        except OSError as exc:  # socket reset/aborted (e.g. cable unplugged), raised by pyvisa-py
+            log.warning("%s: network error %s", command, exc)
+            raise ScopeLost("network link to the scope was interrupted") from exc
 
     def _query_raw(self, command: str, timeout_ms: int = QUERY_TIMEOUT_MS) -> bytes:
         self._check(command)

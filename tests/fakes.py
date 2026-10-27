@@ -9,6 +9,8 @@ import numpy as np
 from pyvisa import constants
 from pyvisa.errors import VisaIOError
 
+from scope_gui.driver import is_control_allowed
+
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
@@ -134,6 +136,12 @@ class FakeVisaResource:
             return True
         return False
 
+    def _set_trigger_mode(self, mode: str) -> None:
+        """``TRMD <mode>`` changes the TRMD? answer, keeping its header style (SHORT/LONG/OFF)."""
+        tokens = self.replies.get("TRMD?", "TRMD AUTO").split()
+        tokens[-1] = mode
+        self.replies["TRMD?"] = " ".join(tokens)
+
     def _binary(self, command: str) -> bytes:
         # The fixtures were captured at different moments; like the real scope, every reply of
         # one acquisition must carry the same TRIGGER_TIME, so all use the WF? ALL timestamp.
@@ -160,6 +168,10 @@ class FakeVisaResource:
             self._pending = (self.replies["*IDN?"] + "\n").encode()
             if command == "*IDN?":  # stolen identity: hand out another client's setting reply
                 self._pending = b"C1:VDIV 1 V\n"
+        elif is_control_allowed(command):  # acquisition control: no reply, like the scope
+            self._pending = None
+            if command.startswith("TRMD "):
+                self._set_trigger_mode(command.split()[1])
         elif command in self.binary:
             self._pending = self._binary(command)
         elif command in self.replies:

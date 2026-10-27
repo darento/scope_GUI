@@ -29,7 +29,7 @@ when the display mixes triggers, US3 Reproduce it without the scope).
 
 **Purpose**: Confirm the baseline; no new dependencies
 
-- [ ] T001 Run `uv run pytest` (expect 441 passed, 3 deselected) and `uv run ruff check` /
+- [X] T001 Run `uv run pytest` (expect 441 passed, 3 deselected) and `uv run ruff check` /
   `uv run ruff format --check` on the branch before any change; do not add dependencies to
   `pyproject.toml`
 
@@ -42,7 +42,7 @@ story is tested on them
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T002 [P] Write `tests/unit/test_driver_control.py` (contracts/driver-control.md, driver
+- [X] T002 [P] Write `tests/unit/test_driver_control.py` (contracts/driver-control.md, driver
   guarantees 1–4) against `FakeVisaResource`: `is_control_allowed` accepts exactly `ARM`,
   `FRTR`, `TRMD AUTO`, `TRMD NORM`, `TRMD SINGLE`, `TRMD STOP` and refuses e.g. `TRMD`,
   `TRMD FOO`, `arm`, `ARM ;*RST`, `C1:VDIV 1`, `*RST`, every read-only query; no command is
@@ -53,17 +53,17 @@ story is tested on them
   `ScopeProtocolError` when `TRMD?` then answers another mode; a write after disconnect raises
   `ScopeError`; a socket reset on write raises `ScopeLost`; a monkeypatched `_write` with a
   non-control command raises `CommandNotAllowed` before reaching the resource
-- [ ] T003 Implement in `src/scope_gui/driver.py`: `CONTROL_COMMANDS` (fullmatch `ARM`, `FRTR`,
+- [X] T003 Implement in `src/scope_gui/driver.py`: `CONTROL_COMMANDS` (fullmatch `ARM`, `FRTR`,
   `TRMD (AUTO|NORM|SINGLE|STOP)`), `is_control_allowed`, `_write(command)` (check control
   allowlist and connection, `log.debug("write %s", command)`, `resource.write`, map
   `VisaIOError`/`OSError` like `_query`), `arm`, `force_trigger`, `read_trigger_mode`
   (`TRMD?` → `TriggerMode[...]`), `restore_trigger_mode(mode)` (write `TRMD <name>` with the
   enum *name*, confirm with `TRMD?`); update the module docstring (read-only allowlist plus
   the acquisition-control exception of constitution v2.1.0 III); make T002 pass
-- [ ] T004 [P] Extend `tests/fakes.py` `FakeVisaResource` so allowlisted control writes are
+- [X] T004 [P] Extend `tests/fakes.py` `FakeVisaResource` so allowlisted control writes are
   recorded in `sent` and leave no pending reply (a later read times out like the scope), and
   `TRMD <mode>` changes its `TRMD?` reply
-- [ ] T005 [P] Write `tests/integration/test_synthetic_running.py` (contracts/synthetic-bench.md
+- [X] T005 [P] Write `tests/integration/test_synthetic_running.py` (contracts/synthetic-bench.md
   1–6) on a `SyntheticScope` used directly (write/read_raw): in `AUTO`/`NORM` two `WF? ALL`
   transfers more than `1/rate_hz` apart return different trigger times and reads within one
   period return the same one; `ARM` → `TRMD?` answers `SINGLE` until the next trigger is due,
@@ -72,20 +72,20 @@ story is tested on them
   `FRTR` while `STOP` changes nothing; `TRMD NORM` → running again; `TRMD SINGLE` arms like
   `ARM`; control commands appear in `sent` and `controls`; `on_demand=True` reproduces the 002
   behaviour (new acquisition per `WF? DESC`, same one for the following `WF? ALL`)
-- [ ] T006 Implement the running model in `tests/synthetic_scope.py` per contract and data-model
+- [X] T006 Implement the running model in `tests/synthetic_scope.py` per contract and data-model
   (`trigger_mode` set by `TRMD <mode>`, default `"NORM"`; `triggers=True`; `on_demand=False`;
   time-based newest acquisition generated lazily with skipped triggers only advancing the
   trigger time; `ARM`/`TRMD SINGLE` arm with `armed_due` = next trigger time; `FRTR`; `STOP`
   holds; `controls` list); keep `acquisitions` counting generated acquisitions; update the
   module docstring; make T005 pass
-- [ ] T007 Move the existing bench tests onto the right model: `bench` fixture in
+- [X] T007 Move the existing bench tests onto the right model: `bench` fixture in
   `tests/integration/test_bench_live.py` gets an `on_demand=True` default for the 002 analysis
   tests (each acquisition measured once, pause, settings change, export, …);
   `test_channels_of_one_acquisition_share_the_trigger_time` reads from a stopped bench;
   `tests/integration/test_bench_accuracy.py` and `tests/integration/test_check_coherence.py`
   pass `on_demand=True` where they rely on one acquisition per descriptor read; run
   `uv run pytest` until all previous tests pass again
-- [ ] T008 [P] Add `MeasurementSpec.channels` (`{source}`, or `{source, source2}` for Δt) in
+- [X] T008 [P] Add `MeasurementSpec.channels` (`{source}`, or `{source, source2}` for Δt) in
   `src/scope_gui/analysis.py` with a test in `tests/unit/test_analysis.py` (Δt C1 → C2 has two,
   Δt C2 → C2 one, Amplitude C3 one)
 
@@ -106,7 +106,7 @@ trigger time for all channels; switch it off: the bench's trigger mode is the on
 
 > Write these first and ensure they fail before implementation.
 
-- [ ] T009 [P] [US1] Write `tests/integration/test_sync_worker.py` (contracts/driver-control.md
+- [X] T009 [P] [US1] Write `tests/integration/test_sync_worker.py` (contracts/driver-control.md
   worker guarantees 1–10) with `AcquisitionWorker` + real `ScopeDriver` + running
   `SyntheticScope` (recorder consumes waveforms like the GUI): mode off after connect and
   `set_synchronized(True)` ignored when not connected; on: `TRMD?` read, `sync_changed(True,
@@ -128,7 +128,7 @@ trigger time for all channels; switch it off: the bench's trigger mode is the on
   ⊆ {`ARM`, `FRTR`, `TRMD <remembered>`}; with the mode never switched on, `controls` is empty;
   the INFO log has `synchronized capture on (was Auto)` and `synchronized capture off
   (switched off): N acquisitions armed, M triggers forced`
-- [ ] T010 [P] [US1] Write `tests/integration/test_sync_ui.py` (contracts/ui.md) with the bench
+- [X] T010 [P] [US1] Write `tests/integration/test_sync_ui.py` (contracts/ui.md) with the bench
   window: checkbox **Synchronized capture** disabled when not connected, unchecked at start and
   after disconnect/reconnect; ticking shows the amber label "Driving the scope: synchronized
   capture" and `Trigger: Auto (synchronized)`; unticking hides them and restores the bench
@@ -139,7 +139,7 @@ trigger time for all channels; switch it off: the bench's trigger mode is the on
 
 ### Implementation for User Story 1
 
-- [ ] T011 [US1] Implement synchronized capture in `src/scope_gui/worker.py` per data-model
+- [X] T011 [US1] Implement synchronized capture in `src/scope_gui/worker.py` per data-model
   state transitions: `sync_changed = Signal(bool, str)`; `set_synchronized` slot; thread-safe
   `set_capture_paused` (`threading.Event`); session fields (`restore_mode`, phase
   `IDLE`/`ARMED`/`READING`, `pending`, `armed_at`, `forced`, counts) reset on connect; in
@@ -154,16 +154,16 @@ trigger time for all channels; switch it off: the bench's trigger mode is the on
   `shutdown` and switching off restore first (failed restore → message naming the mode);
   `_handle_failure`/conflict paths append the "may be left stopped" sentence when on; INFO logs
   for on/off/restore with counts (FR-007); the mode-off loop unchanged; make T009 pass
-- [ ] T012 [P] [US1] Add the **Synchronized capture** checkbox (with the contract tooltip) to the
+- [X] T012 [P] [US1] Add the **Synchronized capture** checkbox (with the contract tooltip) to the
   Acquisition group in `src/scope_gui/ui/side_panel.py`, a `synchronized_toggled` signal,
   `set_synchronized(on)` (checks without re-emitting) and the `(synchronized)` suffix on the
   trigger line while on; enabled only while connected
-- [ ] T013 [US1] Wire it in `src/scope_gui/ui/main_window.py`: `request_synchronized` queued to
+- [X] T013 [US1] Wire it in `src/scope_gui/ui/main_window.py`: `request_synchronized` queued to
   `worker.set_synchronized`; `worker.sync_changed` → checkbox, amber permanent status-bar label,
   status-bar message; pause → `worker.set_capture_paused`; reset the switch on disconnect/lost;
   `closeEvent` waits `SYNC_SHUTDOWN_GRACE_MS = 3000` while the mode is on (else 1000) before
   aborting; make T010 pass
-- [ ] T014 [US1] Add to `tests/hardware/test_real_scope.py` (marked hardware; arms the scope and
+- [X] T014 [US1] Add to `tests/hardware/test_real_scope.py` (marked hardware; arms the scope and
   restores its mode): with the worker on the real scope, switch on for 10 s → every update has
   one trigger time, then off → `TRMD?` equals the mode before; repeat starting from Normal only
   if the scope was in Normal (never change the user's mode otherwise); no written command
@@ -183,7 +183,7 @@ updates as missed while Amplitude C1 keeps counting; with the bench stopped the 
 
 ### Tests for User Story 2
 
-- [ ] T015 [P] [US2] Write `tests/integration/test_mixed_triggers.py`: with synthetic waveform
+- [X] T015 [P] [US2] Write `tests/integration/test_mixed_triggers.py`: with synthetic waveform
   dicts (same and different `trigger_time` per channel) on `MeasurementsPanel.process(...,
   coherent=False)`: Δt C1 → C2 records a miss, Δt C2 → C2, Amplitude C1 and Frequency C1 record
   values; coherence log aligned with the trigger log and cleared by **Clear**; correlation view:
@@ -195,13 +195,13 @@ updates as missed while Amplitude C1 keeps counting; with the bench stopped the 
 
 ### Implementation for User Story 2
 
-- [ ] T016 [P] [US2] `src/scope_gui/ui/measurements_panel.py`: `process(waveforms, gate=None,
+- [X] T016 [P] [US2] `src/scope_gui/ui/measurements_panel.py`: `process(waveforms, gate=None,
   coherent=True)` records NaN for specs with `len(spec.channels) > 1` when not coherent;
   per-acquisition coherence log (same capacity and alignment as `trigger_log`), cleared with the
   statistics, exposed for the histogram panel
-- [ ] T017 [P] [US2] `src/scope_gui/ui/histogram_panel.py`: `_draw_correlation` drops pairs from
+- [X] T017 [P] [US2] `src/scope_gui/ui/histogram_panel.py`: `_draw_correlation` drops pairs from
   mixed acquisitions when the two specs' channels together exceed one (R10)
-- [ ] T018 [US2] `src/scope_gui/ui/main_window.py`: coherence of each displayed update (all
+- [X] T018 [US2] `src/scope_gui/ui/main_window.py`: coherence of each displayed update (all
   `trigger_time` equal), amber permanent mixed-trigger label shown/hidden per contracts/ui.md,
   `coherent` passed to `process` (always true while the mode is on); make T015 pass
 
@@ -216,13 +216,13 @@ updates as missed while Amplitude C1 keeps counting; with the bench stopped the 
 **Independent Test**: `uv run python tests/bench.py` shows the mixed warning; ticking the mode
 removes it.
 
-- [ ] T019 [P] [US3] Extend `tests/integration/test_bench_live.py`: `build_window` gives a
+- [X] T019 [P] [US3] Extend `tests/integration/test_bench_live.py`: `build_window` gives a
   running synthetic scope in `AUTO` (not `on_demand`); connected launcher window shows the
   mixed-trigger label; ticking Synchronized capture hides it, the bench's `controls` contain
   only `ARM`/`FRTR`/`TRMD AUTO`, and unticking leaves the bench in `AUTO`
-- [ ] T020 [US3] `tests/bench.py`: create the `SyntheticScope` in `AUTO` with the running model;
+- [X] T020 [US3] `tests/bench.py`: create the `SyntheticScope` in `AUTO` with the running model;
   mention the switch in the launcher's docstring/help; make T019 pass
-- [ ] T021 [P] [US3] `tests/integration/test_check_coherence.py`: on a running bench with a
+- [X] T021 [P] [US3] `tests/integration/test_check_coherence.py`: on a running bench with a
   trigger rate faster than the reads, `check_coherence.main` flags reads as different triggers
   and returns 1 (no monkeypatching needed any more); keep the stopped-bench case returning 0
 
@@ -232,14 +232,14 @@ removes it.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T022 [P] `tests/check_log.py` + `tests/unit/test_check_log.py`: parse `write <command>` log
+- [X] T022 [P] `tests/check_log.py` + `tests/unit/test_check_log.py`: parse `write <command>` log
   lines; list control commands in their own block; FAIL on any command in neither allowlist;
   PASS line states the number of control commands (0 for a read-only session, SC-004)
-- [ ] T023 [P] `README.md`: replace "strictly read-only" with read-only by default plus the
+- [X] T023 [P] `README.md`: replace "strictly read-only" with read-only by default plus the
   opt-in Synchronized capture (what it writes, that it restores the mode, the front-panel Stop
   limitation); bench section: the bench now runs like the scope; link
   `specs/003-synchronized-capture/quickstart.md`
-- [ ] T024 Full `uv run pytest`, `uv run ruff check`, `uv run ruff format --check`; measure on the
+- [X] T024 Full `uv run pytest`, `uv run ruff check`, `uv run ruff format --check`; measure on the
   bench the update rate with the mode on vs off at 200k points and record it in
   `specs/003-synchronized-capture/checklists/validation.md` (no checkbox lines in that file)
 - [ ] T025 Real-scope validation per quickstart.md R1–R9 and `uv run pytest -m hardware` (needs

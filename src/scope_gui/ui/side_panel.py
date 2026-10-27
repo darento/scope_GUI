@@ -45,6 +45,7 @@ class SidePanel(QWidget):
     cursors_toggled = Signal(bool)
     persistence_changed = Signal(object)  # fade length, None = infinite, 0 = off
     reset_view_requested = Signal()
+    synchronized_toggled = Signal(bool)  # the user ticked/unticked Synchronized capture
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -82,6 +83,15 @@ class SidePanel(QWidget):
         acq_layout.addWidget(self.timebase_label)
         acq_layout.addWidget(self.trigger_label)
         acq_layout.addWidget(self.state_label)
+        self.sync_checkbox = QCheckBox("Synchronized capture")
+        self.sync_checkbox.setToolTip(
+            "The app arms one acquisition at a time, so all channels come from the same trigger."
+            "\nThe scope's trigger mode is restored when this is switched off."
+        )
+        self.sync_checkbox.setEnabled(False)
+        self.sync_checkbox.toggled.connect(self._on_sync_toggled)
+        acq_layout.addWidget(self.sync_checkbox)
+        self._sync_suffix = ""
 
         self.cursors_checkbox = QCheckBox("Cursors")
         self.cursors_checkbox.toggled.connect(self.cursors_toggled)
@@ -141,8 +151,25 @@ class SidePanel(QWidget):
             )
         acq = status.acquisition
         self.timebase_label.setText(f"{format_si(acq.time_per_div, 's')}/div")
-        self.trigger_label.setText(f"Trigger: {acq.trigger_mode.value}")
+        self.trigger_label.setText(f"Trigger: {acq.trigger_mode.value}{self._sync_suffix}")
         self.state_label.setText(f"State: {status.acq_state.value}")
+
+    def set_connected(self, connected: bool) -> None:
+        """Synchronized capture can only be switched on while connected (003 FR-001)."""
+        self.sync_checkbox.setEnabled(connected)
+        if not connected:
+            self.set_synchronized(False)
+
+    def set_synchronized(self, on: bool) -> None:
+        """Show the worker's state of synchronized capture without asking for it again."""
+        blocked = self.sync_checkbox.blockSignals(True)
+        self.sync_checkbox.setChecked(on)
+        self.sync_checkbox.blockSignals(blocked)
+        suffix = " (synchronized)" if on else ""
+        text = self.trigger_label.text().removesuffix(self._sync_suffix)
+        self._sync_suffix = suffix
+        if not text.endswith(NO_VALUE):
+            self.trigger_label.setText(text + suffix)
 
     def set_not_live(self) -> None:
         """Connection lost/failed: the shown settings are the last known ones, not live."""
@@ -159,6 +186,9 @@ class SidePanel(QWidget):
 
     def _on_checkbox_toggled(self, _checked: bool) -> None:
         self.hidden_changed.emit(self.hidden)
+
+    def _on_sync_toggled(self, checked: bool) -> None:
+        self.synchronized_toggled.emit(checked)
 
     def _on_pause_toggled(self, checked: bool) -> None:
         self.pause_button.setText("Resume" if checked else "Pause")

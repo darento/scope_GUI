@@ -21,6 +21,10 @@ from .side_panel import SidePanel
 log = logging.getLogger(__name__)
 
 SHUTDOWN_GRACE_MS = 1000
+SYNC_SHUTDOWN_GRACE_MS = 3000  # the worker restores the trigger mode before closing (003 R8)
+WARNING_STYLE = "color: #f0a020; font-weight: bold;"
+SYNC_TEXT = "Driving the scope: synchronized capture"
+MIXED_TEXT = "Channels from different triggers - switch Synchronized capture on"
 
 
 @dataclass
@@ -28,6 +32,7 @@ class LiveViewState:
     """GUI-only view state; never sent to the scope (data-model.md)."""
 
     paused: bool = False
+    synchronized: bool = False  # the worker drives the acquisition (003)
     hidden_channels: set[str] = field(default_factory=set)
     update_rate_hz: float = 0.0
     stale: bool = False
@@ -39,6 +44,7 @@ class MainWindow(QMainWindow):
     request_confirm = Signal(bool)
     request_disconnect = Signal()
     request_shutdown = Signal()
+    request_synchronized = Signal(bool)
 
     def __init__(self, address: str = "", driver_factory=ScopeDriver):
         super().__init__()
@@ -47,7 +53,8 @@ class MainWindow(QMainWindow):
         self._pending_address = ""
         self._state = ConnectionState.DISCONNECTED
         self.view = LiveViewState()
-        self._to_measure: dict[str, Waveform] | None = None  # shown, measured next turn
+        # Shown and measured in the next turn, with whether all channels share one trigger.
+        self._to_measure: tuple[dict[str, Waveform], bool] | None = None
         self._last_settings = None  # channel and acquisition settings of the last status
 
         self.connection_bar = ConnectionBar(address)
@@ -72,12 +79,20 @@ class MainWindow(QMainWindow):
         self.splitDockWidget(self.measurements_dock, self.histogram_dock, Qt.Orientation.Horizontal)
         self._build_menu()
 
+        # Amber notes of synchronized capture and of mixed-trigger updates (003 contracts/ui.md).
+        self.sync_label = QLabel(SYNC_TEXT)
+        self.mixed_label = QLabel(MIXED_TEXT)
+        for label in (self.sync_label, self.mixed_label):
+            label.setStyleSheet(WARNING_STYLE)
+            label.hide()
+            self.statusBar().addPermanentWidget(label)
         self.rate_label = QLabel()
         self.statusBar().addPermanentWidget(self.rate_label)
         self._update_rate_label()
 
         self.side_panel.hidden_changed.connect(self._on_hidden_changed)
         self.side_panel.paused_changed.connect(self._on_paused_changed)
+        self.side_panel.synchronized_toggled.connect(self.request_synchronized)
 
         # Waveform inspection (FR-014 to FR-018).
         self.side_panel.cursors_toggled.connect(self._on_cursors_toggled)
@@ -101,6 +116,8 @@ class MainWindow(QMainWindow):
         self.request_confirm.connect(self.worker.confirm_unsupported)
         self.request_disconnect.connect(self.worker.close_connection)
         self.request_shutdown.connect(self.worker.shutdown)
+        self.request_synchronized.connect(self.worker.set_synchronized)
+        self.worker.sync_changed.connect(self._on_sync_changed)
         self.worker.state_changed.connect(self._on_state_changed)
         self.worker.identity_received.connect(self.connection_bar.set_identity)
         self.worker.confirmation_needed.connect(self._on_confirmation_needed)
@@ -162,17 +179,32 @@ class MainWindow(QMainWindow):
 
     def _refresh_histogram(self) -> None:
         panel = self.measurements_panel
-        self.histogram_panel.show_measurements(panel.specs, panel.stats, panel.selected_row)
+        self.histogram_panel.show_measurements(
+            panel.specs, panel.stats, panel.selected_row, panel.coherence_log
+        )
 
     def _on_paused_changed(self, paused: bool) -> None:
         # Pausing freezes only the PC display; the worker and the scope keep running (FR-016).
         self.view.paused = paused
+        self.worker.set_capture_paused(paused)  # synchronized capture arms nothing (003 FR-011)
         self._update_rate_label()
+
+    def _on_sync_changed(self, on: bool, message: str) -> None:
+        self.view.synchronized = on
+        self.side_panel.set_synchronized(on)
+        self.sync_label.setVisible(on)
+        if on:
+            self.mixed_label.hide()
+        if message:
+            self.statusBar().showMessage(message)
 
     # --- worker signals ---------------------------------------------------------------------
     def _on_state_changed(self, state: ConnectionState, message: str) -> None:
         self._state = state
         self.connection_bar.set_state(state, message)
+        self.side_panel.set_connected(state is ConnectionState.CONNECTED)
+        if state is not ConnectionState.CONNECTED:
+            self.mixed_label.hide()
         if state is ConnectionState.CONNECTED:
             save_last_address(self._pending_address)
             self._set_stale(False)
@@ -211,18 +243,23 @@ class MainWindow(QMainWindow):
         except BaseException:
             self.worker.waveforms_consumed()
             raise
+        # Channels read one after another from a running scope may come from different
+        # triggers (003 FR-014); synchronized capture prevents it.
+        coherent = len({w.trigger_time for w in waveforms.values()}) <= 1
+        self.mixed_label.setVisible(not coherent and not self.view.synchronized)
         # Measured in the next event-loop turn: input is handled between drawing and analysis,
         # so neither stalls the window for long at 2.5M points (FR-021). The worker sends the
         # next acquisition only after that, so every one shown is measured exactly once.
-        self._to_measure = waveforms
+        self._to_measure = (waveforms, coherent)
         QTimer.singleShot(0, self._measure_shown)
 
     def _measure_shown(self) -> None:
-        waveforms, self._to_measure = self._to_measure, None
+        shown, self._to_measure = self._to_measure, None
         try:
-            if waveforms is not None:
+            if shown is not None:
                 # Every received channel is measured, also those hidden on the PC (FR-008).
-                self.measurements_panel.process(waveforms, self.scope_plot.gate())
+                waveforms, coherent = shown
+                self.measurements_panel.process(waveforms, self.scope_plot.gate(), coherent)
         finally:
             self.worker.waveforms_consumed()
 
@@ -260,7 +297,8 @@ class MainWindow(QMainWindow):
     # --- shutdown (research R8) -------------------------------------------------------------
     def closeEvent(self, event) -> None:
         self.request_shutdown.emit()
-        if not self.worker_thread.wait(SHUTDOWN_GRACE_MS):
+        grace = SYNC_SHUTDOWN_GRACE_MS if self.view.synchronized else SHUTDOWN_GRACE_MS
+        if not self.worker_thread.wait(grace):
             log.info("worker busy on close; aborting pending I/O")
             self.worker.abort()
             self.worker_thread.wait(5000)

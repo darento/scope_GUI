@@ -179,3 +179,37 @@ def test_correlation_aligns_the_coherence_log_with_a_younger_measurement(panel, 
 
 
 # --- window (T018) -----------------------------------------------------------------------------
+MIXED_TEXT = "Channels from different triggers - switch Synchronized capture on"
+
+
+def test_window_flags_mixed_updates_until_synchronized(running_bench, qtbot):
+    window, scope = running_bench(rate_hz=5000)  # triggers faster than one read: always mixed
+    panel = window.measurements_panel
+    panel.add(DT_C1_C2)
+    label = window.mixed_label
+    qtbot.waitUntil(lambda: label.isVisibleTo(window), timeout=3000)
+    assert label.text() == MIXED_TEXT
+    qtbot.waitUntil(lambda: panel.trigger_log.size >= 3, timeout=3000)
+    assert panel.stats[0].summary().count == 0  # Δt between channels: every update missed
+    window.side_panel.sync_checkbox.click()
+    qtbot.waitUntil(lambda: window.view.synchronized, timeout=3000)
+    assert not label.isVisibleTo(window)
+
+
+def test_window_clears_the_flag_when_the_scope_stops(running_bench, qtbot):
+    window, scope = running_bench(rate_hz=5000)
+    qtbot.waitUntil(lambda: window.mixed_label.isVisibleTo(window), timeout=3000)
+    scope._set_mode("STOP")
+    qtbot.waitUntil(lambda: not window.mixed_label.isVisibleTo(window), timeout=3000)
+
+
+def test_window_flag_hidden_after_disconnect_and_with_one_channel(running_bench, qtbot):
+    window, scope = running_bench(rate_hz=5000)
+    qtbot.waitUntil(lambda: window.mixed_label.isVisibleTo(window), timeout=3000)
+    window.connection_bar.button.click()
+    qtbot.waitUntil(lambda: not window.mixed_label.isVisibleTo(window), timeout=3000)
+    for name in ("C2", "C3", "C4"):
+        scope.scene.channels[name].enabled = False
+    window.connection_bar.button.click()
+    qtbot.waitUntil(lambda: window.measurements_panel.trigger_log.size >= 3, timeout=3000)
+    assert not window.mixed_label.isVisibleTo(window)

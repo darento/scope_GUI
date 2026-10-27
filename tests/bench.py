@@ -2,7 +2,9 @@
 
     uv run python tests/bench.py [--rate 20] [--points 10000] [--seed N] [--mean-pe 3]
 
-Press Connect (any address). The synthetic scope sits behind the real ScopeDriver, so the
+Press Connect (any address). The synthetic scope runs in Auto like the real one, so channels
+read one after another come from different triggers until Synchronized capture (side panel) is
+switched on. The synthetic scope sits behind the real ScopeDriver, so the
 allowlist, reply validation, decoding and worker loop run exactly as with the real scope. It
 lives only under tests/ (Constitution I, IV); nothing in src/scope_gui knows about it.
 
@@ -44,7 +46,8 @@ DEMO_MEASUREMENTS = [
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="tests/bench.py",
-        description="Scope GUI on a synthetic WR610Zi: clock (C1), SiPM A/B (C2/C3), NIM (C4).",
+        description="Scope GUI on a synthetic WR610Zi running in Auto: clock (C1), SiPM A/B "
+        "(C2/C3), NIM (C4). Tick Synchronized capture to read all channels from one trigger.",
     )
     parser.add_argument("--rate", type=float, default=20.0, help="acquisitions per second (20)")
     parser.add_argument("--points", type=int, default=10_000, help="samples per record (10000)")
@@ -81,7 +84,7 @@ def build_window(args: argparse.Namespace) -> tuple[MainWindow, SyntheticScope]:
     scene = Scene(points=args.points, mean_pe=args.mean_pe)
     if args.mean_pe > Scene.mean_pe:  # larger pulses: raise C2/C3 V/div so they stay on screen
         fit_vertical_scale(scene)
-    scope = SyntheticScope(scene, rate_hz=args.rate, seed=args.seed)
+    scope = SyntheticScope(scene, rate_hz=args.rate, seed=args.seed, trigger_mode="AUTO")
     factory = synthetic_factory(scope)
     window = MainWindow(ADDRESS, driver_factory=lambda: ScopeDriver(factory))
     window.setWindowTitle(TITLE)

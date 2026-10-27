@@ -329,6 +329,30 @@ def test_bench_launcher_builds_an_isolated_window(qtbot, monkeypatch, tmp_path):
         window.close()
 
 
+def test_bench_launcher_runs_in_auto_and_synchronizes(qtbot, monkeypatch):
+    import bench
+
+    monkeypatch.setattr(driver_module, "tcp_precheck", driver_module.tcp_precheck)
+    window, scope = bench.build_window(bench.parse_args(["--rate", "2000", "--points", "2000"]))
+    qtbot.addWidget(window)
+    try:
+        assert (scope.trigger_mode, scope.on_demand) == ("AUTO", False)
+        window.show()
+        window.connection_bar.button.click()
+        qtbot.waitUntil(lambda: window._state is ConnectionState.CONNECTED, timeout=5000)
+        qtbot.waitUntil(lambda: window.mixed_label.isVisibleTo(window), timeout=5000)
+        window.side_panel.sync_checkbox.click()
+        qtbot.waitUntil(lambda: scope.controls.count("ARM") >= 3, timeout=5000)
+        assert not window.mixed_label.isVisibleTo(window)
+        window.side_panel.sync_checkbox.click()
+        qtbot.waitUntil(lambda: not window.view.synchronized, timeout=3000)
+        assert scope.trigger_mode == "AUTO"
+        assert set(scope.controls) <= {"ARM", "FRTR", "TRMD AUTO"}
+        assert scope.controls[-1] == "TRMD AUTO"
+    finally:
+        window.close()
+
+
 def test_demo_set_only_on_first_start(qtbot, monkeypatch, tmp_path):
     import bench
 

@@ -105,8 +105,10 @@ afterwards.
   - `ARM`: mode `SINGLE` until the next acquisition is due (or `FRTR` arrives), then `STOP`
     holding that acquisition; with `triggers=False` only `FRTR` completes it;
   - `STOP`: frozen; `TRMD <mode>` sets the mode.
-- **Consequence**: existing bench tests that assumed "one new acquisition per descriptor read"
-  are rewritten to read from a stopped bench or through synchronized capture.
+- **Consequence**: the old behaviour ("a new acquisition on every descriptor read", which hid
+  this bug) stays only as an explicit `on_demand=True` option for existing analysis tests that
+  need one deterministic acquisition per update; it is documented as a test convenience, not a
+  model of the scope. The bench launcher and all new tests use the running model.
 
 ## R12 Logging and the log checker
 

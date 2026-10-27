@@ -4,7 +4,8 @@ Extends [002 synthetic-bench contract](../../002-waveform-analysis/contracts/syn
 Lives in `tests/synthetic_scope.py`; never reachable from `src/` (existing test).
 
 ```python
-SyntheticScope(scene=None, rate_hz=20.0, seed=None, trigger_mode="NORM", triggers=True)
+SyntheticScope(scene=None, rate_hz=20.0, seed=None, trigger_mode="NORM", triggers=True,
+               on_demand=False)
 ```
 
 Behaviour (R11):
@@ -18,5 +19,8 @@ Behaviour (R11):
 3. `STOP`: no new acquisitions; every transfer returns the held one.
 4. `TRMD <AUTO|NORM|SINGLE|STOP>` sets the mode (`SINGLE` arms like `ARM`); `TRMD?` answers it.
 5. Every command is recorded in `sent`; control commands also in `controls`.
-6. The bench launcher (`tests/bench.py`) starts in `AUTO`, so the mixed-trigger warning and the
+6. `on_demand=True` keeps the 002 behaviour (a new acquisition on every `WF? DESC`, paced to
+   `rate_hz`, ignoring the trigger mode) for existing tests that need one deterministic
+   acquisition per update; it is not a model of the scope.
+7. The bench launcher (`tests/bench.py`) starts in `AUTO`, so the mixed-trigger warning and the
    switch can be demonstrated.

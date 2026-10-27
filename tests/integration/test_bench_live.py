@@ -1,7 +1,9 @@
 """The synthetic bench behind the real ScopeDriver, worker thread and MainWindow.
 
 Helpers for other tests: the ``bench`` fixture opens a connected window on a ``SyntheticScope``
-(``window, scope = bench(scene=..., rate_hz=200, seed=1)``) and closes it at the end.
+(``window, scope = bench(scene=..., rate_hz=200, seed=1)``) and closes it at the end. It uses
+``on_demand=True`` (one acquisition per update, which the analysis tests rely on); pass
+``on_demand=False`` for the running-scope model.
 """
 
 import numpy as np
@@ -26,11 +28,13 @@ def reachable(monkeypatch):
 
 @pytest.fixture
 def bench(qtbot):
-    """Factory ``bench(scene=None, rate_hz=200, seed=1, connect=True) -> (window, scope)``."""
+    """Factory ``bench(scene=None, rate_hz=200, seed=1, connect=True, on_demand=True)``."""
     windows = []
 
-    def open_bench(scene=None, *, rate_hz=FAST, seed=1, connect=True):
-        scope = SyntheticScope(scene or Scene(points=SMALL), rate_hz=rate_hz, seed=seed)
+    def open_bench(scene=None, *, rate_hz=FAST, seed=1, connect=True, on_demand=True):
+        scope = SyntheticScope(
+            scene or Scene(points=SMALL), rate_hz=rate_hz, seed=seed, on_demand=on_demand
+        )
         factory = synthetic_factory(scope)
         window = MainWindow("synthetic", driver_factory=lambda: ScopeDriver(factory))
         windows.append(window)
@@ -115,15 +119,12 @@ def test_disconnect_and_reconnect(bench, qtbot):
 
 # --- acquisitions, below the GUI ----------------------------------------------------------------
 def test_channels_of_one_acquisition_share_the_trigger_time():
-    scope = SyntheticScope(Scene(points=SMALL), rate_hz=1000, seed=2)
+    scope = SyntheticScope(Scene(points=SMALL), rate_hz=1000, seed=2, trigger_mode="STOP")
     driver = connected_driver(scope)
-    stamps = []
-    for _ in range(3):
-        desc = driver.read_descriptor("C1")  # starts a new acquisition
-        waves = [driver.read_waveform(ch) for ch in CHANNELS]
-        assert {w.trigger_time for w in waves} == {desc.trigger_time}
-        stamps.append(desc.trigger_time)
-    assert stamps == sorted(set(stamps))  # a new trigger time per acquisition, increasing
+    desc = driver.read_descriptor("C1")
+    waves = [driver.read_waveform(ch) for ch in CHANNELS]
+    assert {w.trigger_time for w in waves} == {desc.trigger_time}  # one held acquisition
+    assert scope.acquisitions == 1
     assert [c for c in scope.sent if not is_allowed(c)] == []
 
 

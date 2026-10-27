@@ -1,7 +1,14 @@
 """Synthetic WR610Zi for tests and the bench launcher. Test-only (Constitution I/IV).
 
-Generates a fresh acquisition every time the worker checks for one (``Cn:WF? DESC``), paced to
-``rate_hz``, and answers it with real ``WF? ALL`` blocks (8-bit codes, clipped like the scope).
+Models a running scope (Constitution v2.1.0 Principle IV): in AUTO/NORM the newest acquisition
+advances with time at ``rate_hz`` and every ``Cn:WF?`` returns the newest one, so channels read
+one after another come from different triggers, as on the real WR610Zi. ``ARM`` / ``TRMD SINGLE``
+arm one acquisition (``TRMD?`` answers SINGLE until it completes, then STOP; all channels then
+share one trigger time); ``FRTR`` completes an armed acquisition at once and does nothing
+otherwise; ``TRMD <AUTO|NORM|SINGLE|STOP>`` sets the mode. Replies are real ``WF? ALL`` blocks
+(8-bit codes, clipped like the scope). ``on_demand=True`` keeps the old 002 behaviour (a fresh
+acquisition on every ``WF? DESC``, paced to ``rate_hz``, mode ignored) for tests that need one
+deterministic acquisition per update; it is a test convenience, not a model of the scope.
 
 Default scene (trigger on the C1 clock edge at t = 0):
 
@@ -241,22 +248,46 @@ def acquisition_block(
 class SyntheticScope:
     """VISA-resource stand-in (write/read_raw/query/clear/close) producing synthetic signals.
 
-    Like ``FakeVisaResource`` it records every written command in ``sent``; a command without
-    a reply times out. ``reset`` makes every write raise a socket reset (cable unplugged).
+    Like ``FakeVisaResource`` it records every written command in ``sent`` (control commands
+    ``ARM``/``FRTR``/``TRMD <mode>`` also in ``controls``); a command without a reply times out,
+    and control commands never reply. ``reset`` makes every write raise a socket reset (cable
+    unplugged).
+
+    Triggers fall on a fixed grid, trigger ``n`` at ``n / rate_hz`` s after the scope was made
+    (that ``n / rate_hz`` is the acquisition's trigger time). Acquisitions are generated lazily:
+    triggers nobody reads only advance the newest index. ``triggers=False`` keeps an armed
+    acquisition from completing by itself (only ``FRTR`` completes it). Time comes from
+    ``clock`` (``time.monotonic``); tests may replace it with a controllable one.
     """
 
-    def __init__(self, scene: Scene | None = None, rate_hz: float = 20.0, seed: int | None = None):
+    def __init__(
+        self,
+        scene: Scene | None = None,
+        rate_hz: float = 20.0,
+        seed: int | None = None,
+        trigger_mode: str = "NORM",
+        triggers: bool = True,
+        on_demand: bool = False,
+    ):
         self.scene = scene or Scene()
         self.rate_hz = rate_hz
         self.rng = np.random.default_rng(seed)
         self.timeout = 3000
         self.closed = False
         self.reset = False
-        self.trigger_mode = "NORM"
+        self.trigger_mode = trigger_mode
+        self.triggers = triggers
+        self.on_demand = on_demand
         self.sent: list[str] = []
+        self.controls: list[str] = []
         self.cleared = 0
         self.acquisitions = 0
         self.current: SyntheticAcquisition | None = None
+        self.armed_due: float | None = None  # clock time the armed acquisition completes
+        self.clock = time.monotonic
+        self._origin = self.clock() - 1 / rate_hz  # trigger 1 is due when the scope is made
+        self._index = 0  # trigger index of ``current``
+        self._armed_index = 0
         self._trigger_seconds = 0.0
         self._next_due = 0.0
         self._pending: bytes | None = None
@@ -289,7 +320,8 @@ class SyntheticScope:
         }.get(query)
 
     def _acquire(self) -> None:
-        """Make a new acquisition, no faster than ``rate_hz`` (the wait stands in for transfer)."""
+        """On demand: a new acquisition, no faster than ``rate_hz`` (the wait stands in for
+        transfer)."""
         now = time.monotonic()
         if now < self._next_due:
             time.sleep(self._next_due - now)
@@ -299,6 +331,70 @@ class SyntheticScope:
         # One trigger time per acquisition, shared by all its channels, increasing with 1/rate.
         self._trigger_seconds = self.acquisitions / self.rate_hz
 
+    # --- running model ---------------------------------------------------------------------
+    def _newest(self) -> int:
+        """Index of the newest trigger that has happened by now."""
+        return math.floor((self.clock() - self._origin) * self.rate_hz + 1e-9)
+
+    def _hold(self, index: int) -> None:
+        """Generate the acquisition of trigger ``index`` and keep it as the current one."""
+        self.current = SyntheticAcquisition(self.scene, self.rng)
+        self.acquisitions += 1
+        self._index = index
+        self._trigger_seconds = index / self.rate_hz
+
+    def _settle(self) -> None:
+        """Complete the armed acquisition if its trigger is due."""
+        if self.trigger_mode == "SINGLE" and self.triggers and self.armed_due is not None:
+            if self.clock() >= self.armed_due:
+                self._complete(self._armed_index)
+
+    def _complete(self, index: int) -> None:
+        self._hold(index)
+        self.armed_due = None
+        self.trigger_mode = "STOP"
+
+    def _arm(self) -> None:
+        self.trigger_mode = "SINGLE"
+        self._armed_index = max(self._newest(), self._index) + 1
+        self.armed_due = self._origin + self._armed_index / self.rate_hz
+
+    def _force(self) -> None:
+        if self.trigger_mode == "SINGLE" and self.armed_due is not None:
+            self._complete(max(self._newest(), self._index + 1))
+
+    def _set_mode(self, mode: str) -> None:
+        if mode == "SINGLE":
+            self._arm()
+            return
+        if mode == "STOP" and self.trigger_mode in ("AUTO", "NORM"):
+            self._acquisition()  # what was running is what stays held
+        self.armed_due = None
+        self.trigger_mode = mode
+
+    def _acquisition(self) -> SyntheticAcquisition:
+        """What a ``WF?`` answers now: the newest acquisition while running, else the held one."""
+        if self.on_demand and self.current is not None:
+            return self.current  # made by ``_acquire``: the mode is ignored
+        running = self.trigger_mode in ("AUTO", "NORM")
+        if self.current is None or (running and self._newest() > self._index):
+            self._hold(max(self._newest(), self._index))
+        return self.current
+
+    def _control(self, command: str) -> bool:
+        """Apply ``ARM`` / ``FRTR`` / ``TRMD <mode>``; False if ``command`` is none of them."""
+        verb, _, argument = command.partition(" ")
+        if verb == "ARM" and not argument:
+            self._arm()
+        elif verb == "FRTR" and not argument:
+            self._force()
+        elif verb == "TRMD" and argument in ("AUTO", "NORM", "SINGLE", "STOP"):
+            self._set_mode(argument)
+        else:
+            return False
+        self.controls.append(command)
+        return True
+
     # --- VISA-like API ---------------------------------------------------------------------
     def write(self, command: str) -> None:
         if self.closed:
@@ -306,14 +402,21 @@ class SyntheticScope:
         if self.reset:
             raise ConnectionResetError(10054, "connection forcibly closed by the remote host")
         self.sent.append(command)
+        self._pending = None
+        self._settle()
         ch, _, rest = command.partition(":")
         if rest == "WF? DESC" and ch in CHANNEL_INDEX:
-            self._acquire()
-            self._pending = acquisition_block(self.current, ch, "DESC", self._trigger_seconds)
-        elif rest == "WF? ALL" and ch in CHANNEL_INDEX:
-            if self.current is None:
+            if self.on_demand:
                 self._acquire()
-            self._pending = acquisition_block(self.current, ch, "ALL", self._trigger_seconds)
+            self._pending = acquisition_block(
+                self._acquisition(), ch, "DESC", self._trigger_seconds
+            )
+        elif rest == "WF? ALL" and ch in CHANNEL_INDEX:
+            if self.on_demand and self.current is None:
+                self._acquire()
+            self._pending = acquisition_block(self._acquisition(), ch, "ALL", self._trigger_seconds)
+        elif self._control(command):
+            pass  # control commands have no reply
         else:
             text = self._text(command)
             self._pending = None if text is None else (text + "\n").encode()

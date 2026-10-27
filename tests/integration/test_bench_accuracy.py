@@ -188,7 +188,8 @@ def test_same_seed_gives_identical_volts():
 
 
 def test_scope_with_a_seed_is_reproducible():
-    one, two = SyntheticScope(seed=3, rate_hz=1000), SyntheticScope(seed=3, rate_hz=1000)
+    one = SyntheticScope(seed=3, rate_hz=1000, on_demand=True)
+    two = SyntheticScope(seed=3, rate_hz=1000, on_demand=True)
     for scope in (one, two):
         scope.write("C1:WF? DESC")
     assert np.array_equal(one.current.volts["C3"], two.current.volts["C3"])
@@ -227,7 +228,7 @@ def test_clock_trigger_edge_at_time_zero():
 
 # --- 8-bit codes --------------------------------------------------------------------------------
 def test_waveforms_of_matches_the_decoded_block():
-    scope = SyntheticScope(seed=4, rate_hz=1000)
+    scope = SyntheticScope(seed=4, rate_hz=1000, on_demand=True)
     scope.write("C1:WF? DESC")
     acq = scope.current
     waves = waveforms_of(acq)

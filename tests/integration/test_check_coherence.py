@@ -16,7 +16,7 @@ def no_network(monkeypatch):
 
 
 def bench_driver() -> tuple[ScopeDriver, SyntheticScope]:
-    scope = SyntheticScope(Scene(points=2000), rate_hz=1000, seed=3)
+    scope = SyntheticScope(Scene(points=2000), rate_hz=1000, seed=3, on_demand=True)
     driver = ScopeDriver(synthetic_factory(scope))
     driver.connect("TCPIP0::synthetic::inst0::INSTR")
     return driver, scope

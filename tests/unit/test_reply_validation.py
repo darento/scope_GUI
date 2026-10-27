@@ -72,6 +72,9 @@ def test_binary_headers():
 def test_chdr_off_checks_binary_only():
     assert reply_matches("TDIV?", "1 V", "OFF")
     assert reply_matches("C1:WF? DESC", b"#9000000346WAVEDESC", "OFF")
+    assert reply_matches("C3:WF? DESC", b"DESC,#9000000346WAVEDESC", "OFF")  # the WR610Zi
+    assert reply_matches("C3:WF? ALL", b"ALL,#9000000346WAVEDESC", "OFF")
+    assert not reply_matches("C3:WF? DESC", b"ALL,#9000000346WAVEDESC", "OFF")
     assert not reply_matches("C1:WF? DESC", b"1E-9\n", "OFF")
 
 

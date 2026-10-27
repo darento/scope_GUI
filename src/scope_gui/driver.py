@@ -126,12 +126,16 @@ def reply_matches(command: str, reply: bytes | str, header_mode: str) -> bool:
     """True if ``reply`` answers ``command`` (FR-021, research R13).
 
     Text replies are checked by their header (impossible with ``CHDR OFF``); binary replies
-    (``WF?``) must start with ``Cn:WF DESC,`` / ``Cn:WF ALL,`` or, with ``CHDR OFF``, ``#``.
+    (``WF?``) must start with ``Cn:WF DESC,`` / ``Cn:WF ALL,`` or, with ``CHDR OFF``, ``DESC,`` /
+    ``ALL,`` (as the WR610Zi sends) or ``#``.
     """
     binary = isinstance(reply, bytes)
     text = reply[:40].decode("ascii", "replace") if binary else reply
     if header_mode == "OFF":
-        return text.startswith("#") if binary else True
+        if not binary:
+            return True
+        kind, comma, _ = text.partition(",")
+        return text.startswith("#") or bool(comma) and kind.upper() == command.split()[1].upper()
     tokens = text.replace(",", " ", 1).split() if binary else text.split()
     if not tokens or tokens[0].upper() not in expected_headers(command):
         return False

@@ -22,7 +22,7 @@ import sys
 from scope_gui.analysis import Trace
 from scope_gui.driver import ScopeDriver
 from scope_gui.models import Waveform
-from scope_gui.settings import load_last_address
+from scope_gui.settings import load_last_address, to_visa_resource
 
 
 def read_set(driver: ScopeDriver) -> dict[str, Waveform]:
@@ -94,7 +94,7 @@ def main(argv: list[str] | None = None, driver: ScopeDriver | None = None) -> in
     if not driver.is_open:
         address = args.address or load_last_address()
         print(f"Connecting to {address} ...")
-        print(f"Connected: {driver.connect(address)}")
+        print(f"Connected: {driver.connect(to_visa_resource(address))}")
     try:
         same = run(driver, args.reads)
     finally:

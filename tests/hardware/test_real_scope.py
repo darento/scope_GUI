@@ -1,4 +1,7 @@
-"""Tests against the real scope (read-only). Run with: uv run pytest -m hardware"""
+"""Tests against the real scope. Run with: uv run pytest -m hardware
+
+Read-only, except ``test_synchronized_capture``: it arms the scope (003) and restores the
+trigger mode it found."""
 
 import logging
 
@@ -149,3 +152,46 @@ def test_analysis_session_read_only(scope_address, live_seconds, qtbot):
     assert sent and all(is_allowed(cmd) for cmd in sent), sorted(set(sent))
     rate = window.view.update_rate_hz
     print(f"\nanalysis session: {panel.trigger_log.size} acquisitions measured, {rate:.2f}/s")
+
+
+def test_synchronized_capture(scope_address, qtbot):
+    """003 SC-001/SC-003/FR-005: 10 s of synchronized capture, every update from one trigger,
+    then the scope is back in the mode it was in and only ARM, FRTR and that TRMD were written.
+    Runs from whatever mode the scope is in (Normal is covered only if the user left it there)."""
+    address = to_visa_resource(scope_address)
+    before = snapshot(address)
+    mode = before["TRMD?"].split()[-1]
+    sent: list[str] = []
+
+    def factory():
+        return ScopeDriver(
+            resource_factory=lambda a, t: RecordingResource(
+                driver_module._default_factory(a, t), sent
+            )
+        )
+
+    worker = AcquisitionWorker(factory)
+    received: list[dict] = []
+    changes: list[tuple[bool, str]] = []
+    worker.waveforms_updated.connect(received.append)
+    worker.waveforms_updated.connect(lambda _w: worker.waveforms_consumed())
+    worker.sync_changed.connect(lambda on, message: changes.append((on, message)))
+    worker.connect_to(scope_address)
+    assert worker.state is ConnectionState.CONNECTED
+    try:
+        worker.set_synchronized(True)
+        assert changes and changes[-1] == (True, ""), changes
+        qtbot.wait(10_000)
+        assert changes[-1][0], changes  # still on: no conflict, no lost link
+        worker.set_synchronized(False)
+    finally:
+        worker.close_connection()
+    after = snapshot(address)
+
+    assert after == before  # trigger mode included
+    assert received, "no waveform received"
+    mixed = [w for w in received if len({wf.trigger_time for wf in w.values()}) > 1]
+    assert not mixed, f"{len(mixed)} of {len(received)} updates mix triggers"
+    control = {"ARM", "FRTR", f"TRMD {mode}"}
+    assert all(is_allowed(cmd) or cmd in control for cmd in sent), sorted(set(sent))
+    print(f"\nsynchronized: {len(received)} coherent updates in 10 s from {mode}")

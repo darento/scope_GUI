@@ -320,7 +320,9 @@ class ScopeDriver:
         """Put the trigger mode back to ``mode`` and confirm it with ``TRMD?``."""
         self._write(f"TRMD {mode.name}")
         actual = self.read_trigger_mode()
-        if actual is not mode:
+        # A restored Single re-arms; it may trigger and stop before the check.
+        done_single = mode is TriggerMode.SINGLE and actual is TriggerMode.STOP
+        if actual is not mode and not done_single:
             raise ScopeProtocolError(f"trigger mode is {actual.value}, expected {mode.value}")
         log.info("trigger mode restored to %s", mode.value)
 

@@ -147,6 +147,21 @@ def test_restore_trigger_mode_mismatch(connected, caplog):
     assert not any("restored" in message for message in caplog.messages)
 
 
+def test_restored_single_may_already_have_stopped(connected):
+    driver, fake = connected
+    real_write = fake.write
+
+    def write_then_stopped(command):
+        real_write(command)
+        if command.startswith("TRMD "):
+            fake.set_reply("TRMD?", "TRMD STOP")  # e.g. re-armed and triggered before the check
+
+    fake.write = write_then_stopped
+    driver.restore_trigger_mode(TriggerMode.SINGLE)
+    with pytest.raises(ScopeProtocolError):  # any other mode still has to match
+        driver.restore_trigger_mode(TriggerMode.AUTO)
+
+
 def test_write_logs_at_debug(connected, caplog):
     driver, _ = connected
     with caplog.at_level(logging.DEBUG, logger="scope_gui.driver"):

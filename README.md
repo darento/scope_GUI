@@ -4,9 +4,21 @@ Desktop app that mirrors the live waveforms of the lab's **LeCroy WaveRunner 610
 the network: same channels, colours, 10 × 8 division grid, scales, offsets, timebase and trigger
 position as the scope's own screen.
 
-The app is **strictly read-only**: it sends only queries from a fixed allowlist
-(`src/scope_gui/driver.py`, `ALLOWED_COMMANDS`) and never changes any scope setting.
-There is no simulated or demo mode; it always shows what the real scope is acquiring.
+The app is **read-only by default**: it sends only queries from a fixed allowlist
+(`src/scope_gui/driver.py`, `ALLOWED_COMMANDS`) and changes no scope setting. The one exception is
+the opt-in **Synchronized capture** (below). There is no simulated or demo mode; it always shows
+what the real scope is acquiring.
+
+**Synchronized capture** (side panel checkbox; off at every start). On a running scope the channels
+are read one after another, so with several channels they can come from different triggers, which
+spoils Δt measurements between them. With the mode on, the app arms one acquisition at a time and
+reads all channels from that same trigger. It writes only `ARM`, `FRTR` (a forced trigger after
+0.5 s, if the scope was in Auto and nothing triggered) and `TRMD <the mode it found>` (separate
+allowlist, `CONTROL_COMMANDS`). It restores your trigger mode when you switch the mode off, when you
+disconnect and when you close the app; if the connection is lost while it is on, the app tells you
+the scope may be left stopped. While it is on an **amber indicator** says the app is driving the
+scope's acquisition. Limitation: a front-panel Stop cannot be told apart from the app's own stops
+while the mode is on.
 
 On top of the mirror, the app measures the waveforms it has already received (no extra scope
 commands): time between threshold crossings of any channels, pulse and clock parameters, running
@@ -85,6 +97,9 @@ discriminator output. It goes through the real driver and allowlist, uses its ow
 (`%LOCALAPPDATA%\scope_gui\bench.ini`) and starts with a demo set of measurements. Validation
 steps: `specs/002-waveform-analysis/quickstart.md`.
 
+The bench behaves like a running scope: channels read one after another come from different
+triggers, unless Synchronized capture is on (`specs/003-synchronized-capture/quickstart.md`).
+
 ## Tests
 
 ```powershell
@@ -100,5 +115,5 @@ To refresh the recorded scope replies used by the tests:
 
 Developed with GitHub Spec Kit (spec-driven development). Constitution:
 `.specify/memory/constitution.md`. Feature docs and manual validation steps:
-`specs/001-live-waveform-view/` (live view) and `specs/002-waveform-analysis/` (analysis and
-bench), each with a `quickstart.md`.
+`specs/001-live-waveform-view/` (live view), `specs/002-waveform-analysis/` (analysis and bench)
+and `specs/003-synchronized-capture/` (synchronized capture), each with a `quickstart.md`.

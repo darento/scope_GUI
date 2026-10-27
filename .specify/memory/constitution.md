@@ -42,9 +42,29 @@ The application MUST NOT change the scope's state unless the user explicitly ask
 - Destructive or hard-to-reverse operations (`*RST`, setup recall/overwrite, deleting files on
   the scope, calibration) MUST require a confirmation dialog.
 - Every state-changing command sent to the instrument MUST be logged.
+- Every command the driver sends MUST match an explicit allowlist enforced in the driver layer
+  and covered by tests; state-changing commands have their own allowlist, separate from the
+  read-only one.
+
+**Acquisition control (the one exception to read-only polling).** Reading channels one at a
+time from a running scope returns each channel from a different trigger (measured on the
+WR610Zi, 2026-10-27). To show all channels of one trigger, the user MAY switch on a mode in
+which the application drives the acquisition. While, and only while, it is on:
+
+- It is off by default, switched on and off only by an explicit user action, and the UI MUST
+  show at all times that the application is driving the scope.
+- Polling MAY send, repeatedly, only the acquisition-control commands of its own allowlist
+  (on the WR610Zi: arm a single acquisition, wait for it, synchronise, optionally force a
+  trigger, and restore the trigger mode). No other setting may be written, ever.
+- The trigger mode read before the mode was switched on MUST be restored when it is switched
+  off, on disconnect and on application close. If the link is lost first, the user MUST be told
+  the scope may be left stopped.
+- Logging: switching on and off, and every restore, MUST be logged; the repeated per-acquisition
+  commands MAY be logged as a count when the mode stops instead of one line each.
 
 Rationale: the scope is shared lab equipment; an unattended or accidental write can destroy
-someone else's carefully prepared setup.
+someone else's carefully prepared setup. Acquisition control changes only whether the scope is
+armed, never how it is set up, and it always hands the scope back as it found it.
 
 ### IV. Testable Without Hardware
 
@@ -52,6 +72,9 @@ Every feature MUST be verifiable with no oscilloscope connected. Rules:
 
 - Each feature MUST ship with pytest tests that run against a fake instrument. Fakes live
   only under `tests/` and MUST NOT be reachable from the application.
+- Fakes MUST model the instrument behaviour a feature depends on; in particular, a fake of a
+  running scope MUST let acquisitions change between two transfers, so reads that mix
+  triggers are reproducible without hardware.
 - The default test run (`uv run pytest`) MUST pass on a machine with no scope and no NI-VISA.
 - Tests that need real hardware MUST be marked (e.g. `@pytest.mark.hardware`) and skipped by
   default.
@@ -113,4 +136,4 @@ task conflicts with it, the constitution wins until it is amended.
 - **Compliance** is checked in every plan's Constitution Check and during review before merge;
   unjustified complexity or principle violations block the merge.
 
-**Version**: 2.0.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-23
+**Version**: 2.1.0 | **Ratified**: 2026-10-23 | **Last Amended**: 2026-10-27
